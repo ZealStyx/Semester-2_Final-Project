@@ -4,6 +4,31 @@ A [libGDX](https://libgdx.com/) project generated with [gdx-liftoff](https://git
 
 This project was generated with a template including simple application launchers and a main class extending `Game` that sets the first screen.
 
+### Summary
+Resonance is a 3D psychological horror game where the player navigates near-total darkness using sound instead of sight. The core mechanic transforms sound events into temporary spatial awareness by running Dijkstra's shortest-path propagation through a graph representation of the level. A Director AI powered by K-Means clustering continuously analyzes player behavior and adapts tension in real time (ambient audio, hallucination cues, enemy pressure, and recovery windows). Each run consists of three procedurally generated levels so no two playthroughs are identical, while each level retains handcrafted puzzle logic to ensure meaningful progression.
+
+### The Three Pillars
+```
+PILLAR 1 - ACOUSTIC NAVIGATION
+  Sound reveals geometry through short-lived sonar pulses
+  Dijkstra pathing simulates non-line-of-sight sound travel
+  Player learns space by listening, not by seeing
+  Breaking or dropping objects produce sounds enemies can hear
+
+PILLAR 2 - DIRECTOR AI ADAPTATION
+  K-Means clusters player behavior into psychological states
+  Dynamic pacing adjusts pressure and relief moments
+  Fear intensity responds to player movement patterns
+
+PILLAR 3 - PROCEDURAL SURVIVAL LOOP
+  3 procedurally generated levels — different layout every run
+  Each level has unique handcrafted puzzle logic and goal items
+  Items spawn randomly across generated rooms
+  Mic-enabled Clap/Shout pulse mechanic
+  Stylized HUD with stress and noise indicators
+  Resource-limited tools in a high-tension environment
+```
+
 ## Platforms
 
 - `core`: Main module with the application logic shared by all platforms.
