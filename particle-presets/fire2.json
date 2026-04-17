@@ -1,0 +1,35 @@
+{
+name: Fire
+particleMeshType: TETRAHEDRON
+emissionRate: 256
+lifetimeMin: 0.5
+lifetimeMax: 1.2
+startSizeMin: 0.08
+startSizeMax: 0.16
+endSizeMin: 0.03
+endSizeMax: 0.07
+speedMin: 1.6
+speedMax: 3.1
+emissionShape: CONE
+spawnRadius: 3
+coneHalfAngle: 26
+emissiveStrength: 0
+startColor: [ 0, 1, 0, 1 ]
+endColor: [ 0, 0.45, 0, 0 ]
+colorGradient: [
+	[ 0, 1, 0.9, 0.2, 1 ]
+	[ 0.3, 1, 0.5, 0.05, 0.9 ]
+	[ 0.65, 0.6, 0.1, 0, 0.6 ]
+	[ 1, 0.1, 0.05, 0, 0 ]
+]
+material: {
+	diffuseStrength: 0.75
+	ambientStrength: 0.22
+	fresnelEnabled: true
+	fresnelStrength: 0.3
+	fresnelPower: 2.1
+	fresnelColor: [ 1, 0.48, 0.06 ]
+	edgeFadeStrength: 0.08
+	edgeFadePower: 2.3
+}
+}

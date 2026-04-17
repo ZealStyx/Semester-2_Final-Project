@@ -1,0 +1,31 @@
+{
+  "attenuationAlpha": 0.35,
+  "revealThreshold": 0.22,
+  "eventTunings": {
+    "FOOTSTEP": {
+      "baseIntensity": 0.35,
+      "cooldownSeconds": 0.15,
+      "pulseLifetimeSeconds": 0.55
+    },
+    "OBJECT_DROP_OR_BREAK": {
+      "baseIntensity": 0.65,
+      "cooldownSeconds": 0.45,
+      "pulseLifetimeSeconds": 0.85
+    },
+    "CLAP_SHOUT": {
+      "baseIntensity": 0.9,
+      "cooldownSeconds": 0.9,
+      "pulseLifetimeSeconds": 1.1
+    },
+    "ENEMY_SCREAM": {
+      "baseIntensity": 0.8,
+      "cooldownSeconds": 1.2,
+      "pulseLifetimeSeconds": 1.2
+    },
+    "PHYSICS_COLLAPSE": {
+      "baseIntensity": 1.0,
+      "cooldownSeconds": 1.5,
+      "pulseLifetimeSeconds": 1.2
+    }
+  }
+}
