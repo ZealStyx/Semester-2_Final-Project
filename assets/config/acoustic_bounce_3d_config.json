@@ -1,0 +1,18 @@
+{
+  "enabled": true,
+  "graph_layer": {
+    "render_edges": true,
+    "fade_out_seconds": 2.0
+  },
+  "geometric_layer": {
+    "ray_count": 36,
+    "ray_max_distance_meters": 30.0,
+    "bounce_marker_scale": 0.3,
+    "fade_out_seconds": 3.0
+  },
+  "microphone": {
+    "input_enabled": true,
+    "sensitivity_threshold": 0.3,
+    "trigger_sound_event": "MIC_INPUT"
+  }
+}

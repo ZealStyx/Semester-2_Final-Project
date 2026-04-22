@@ -55,7 +55,7 @@ public final class CarrySystem {
     public void update(float deltaSeconds) {
         updateCarryPoint();
 
-        if (deltaSeconds <= 0f || heldItem == null) {
+        if (heldItem == null) {
             return;
         }
 
@@ -66,22 +66,12 @@ public final class CarrySystem {
         }
 
         rigidBody.getWorldTransform(scratchTransform);
-        scratchTransform.getTranslation(scratchPosition);
-
-        scratchError.set(carryPoint).sub(scratchPosition);
-        scratchSpring.set(scratchError).scl(springStrength);
-
-        scratchVelocity.set(rigidBody.getLinearVelocity());
-        scratchDamping.set(scratchVelocity).scl(-damping);
-
-        scratchForce.set(scratchSpring).add(scratchDamping);
-        float forceLength = scratchForce.len();
-        if (forceLength > maxCarryForce && forceLength > 0f) {
-            scratchForce.scl(maxCarryForce / forceLength);
-        }
-
-        rigidBody.applyCentralForce(scratchForce);
+        scratchTransform.setTranslation(carryPoint);
+        rigidBody.setWorldTransform(scratchTransform);
+        rigidBody.setLinearVelocity(Vector3.Zero);
+        rigidBody.setAngularVelocity(Vector3.Zero);
         rigidBody.activate();
+        heldItem.setWorldPosition(carryPoint);
     }
 
     public boolean tryPickup(CarriableItem carriableItem) {
@@ -94,7 +84,6 @@ public final class CarrySystem {
         btRigidBody rigidBody = carriableItem.rigidBody();
         if (rigidBody != null) {
             rigidBody.setActivationState(Collision.DISABLE_DEACTIVATION);
-            rigidBody.setGravity(carriedGravity);
             rigidBody.setDamping(damping, rotationDamping);
             rigidBody.activate();
         }

@@ -9,7 +9,7 @@ import org.junit.Test;
 public class SoundPropagationOrchestratorTest {
     @Test
     public void emitSoundEventDispatchesToEnemyAndDirectorListeners() {
-        AcousticGraphEngine graphEngine = new AcousticGraphEngine().buildTestGraph();
+        AcousticGraphEngine graphEngine = TestAcousticGraphFactory.create();
         SonarRenderer sonarRenderer = new SonarRenderer();
         SpatialCueController spatialCueController = new SpatialCueController();
         SoundPropagationOrchestrator orchestrator = new SoundPropagationOrchestrator(
@@ -36,7 +36,7 @@ public class SoundPropagationOrchestratorTest {
 
     @Test
     public void emitSoundEventRespectsCooldowns() {
-        AcousticGraphEngine graphEngine = new AcousticGraphEngine().buildTestGraph();
+        AcousticGraphEngine graphEngine = TestAcousticGraphFactory.create();
         SoundPropagationOrchestrator orchestrator = new SoundPropagationOrchestrator(
             graphEngine,
             new DijkstraPathfinder(),

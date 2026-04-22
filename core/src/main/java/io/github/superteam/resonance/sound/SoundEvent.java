@@ -16,7 +16,8 @@ public enum SoundEvent {
     GLASS_BREAK(0.70f, 0.30f, 0.80f, FrequencyBand.HIGH, EventPriority.MEDIUM),
     WATER_DRIP(0.15f, 2.00f, 0.40f, FrequencyBand.HIGH, EventPriority.AMBIENT),
     AMBIENT_CREAK(0.10f, 3.00f, 0.50f, FrequencyBand.LOW, EventPriority.AMBIENT),
-    NOISE_DECOY(0.80f, 0.00f, 1.00f, FrequencyBand.HIGH, EventPriority.HIGH);
+    NOISE_DECOY(0.80f, 0.00f, 1.00f, FrequencyBand.HIGH, EventPriority.HIGH),
+    MIC_INPUT(0.75f, 0.08f, 1.00f, FrequencyBand.HIGH, EventPriority.HIGH);
 
     private final float defaultBaseIntensity;
     private final float cooldownSeconds;

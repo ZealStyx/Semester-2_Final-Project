@@ -1,16 +1,17 @@
 package io.github.superteam.resonance.devTest;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Mesh;
 import com.badlogic.gdx.graphics.PerspectiveCamera;
-import com.badlogic.gdx.graphics.Pixmap;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes;
-import com.badlogic.gdx.graphics.glutils.FrameBuffer;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.math.MathUtils;
@@ -51,7 +52,20 @@ import io.github.superteam.resonance.player.PlayerController;
 import io.github.superteam.resonance.player.PlayerFeatureExtractor;
 import io.github.superteam.resonance.player.PlayerFootstepSoundEmitter;
 import io.github.superteam.resonance.player.PlayerInteractionSystem;
+import io.github.superteam.resonance.player.SimplePanicModel;
 import io.github.superteam.resonance.player.TestCrate;
+import io.github.superteam.resonance.sound.RealtimeMicSystem;
+import io.github.superteam.resonance.devTest.universal.UniversalTestScene;
+import io.github.superteam.resonance.rendering.BodyCamPassFrameBuffer;
+import io.github.superteam.resonance.rendering.BodyCamSettingsStore;
+import io.github.superteam.resonance.rendering.BodyCamVHSAnimator;
+import io.github.superteam.resonance.rendering.BodyCamVHSSettings;
+import io.github.superteam.resonance.rendering.BodyCamVHSShaderLoader;
+import io.github.superteam.resonance.rendering.BodyCamVHSVisualizer;
+import io.github.superteam.resonance.rendering.blind.BlindEffectConfigStore;
+import io.github.superteam.resonance.rendering.blind.BlindEffectController;
+import io.github.superteam.resonance.rendering.blind.BlindEffectRevealConfig;
+import io.github.superteam.resonance.rendering.blind.BlindFogUniformUpdater;
 import io.github.superteam.resonance.sound.AcousticGraphEngine;
 import io.github.superteam.resonance.sound.DijkstraPathfinder;
 import io.github.superteam.resonance.sound.PropagationResult;
@@ -62,6 +76,7 @@ import io.github.superteam.resonance.sound.SoundEventData;
 import io.github.superteam.resonance.sound.PhysicsNoiseEmitter;
 import io.github.superteam.resonance.sound.SoundPropagationOrchestrator;
 import io.github.superteam.resonance.sound.SpatialCueController;
+import io.github.superteam.resonance.sound.TestAcousticGraphFactory;
 
 /**
  * Player system test and demo screen.
@@ -69,7 +84,7 @@ import io.github.superteam.resonance.sound.SpatialCueController;
  * Responsibilities:
  * - Scene construction and collision setup
  * - Player controller + interaction + sound orchestration integration
- * - Render pipeline (world -> VHS post-process -> HUD)
+ * - Render pipeline (world -> BodyCam+VHS post-process -> HUD)
  */
 public class PlayerTestScreen extends ScreenAdapter {
 
@@ -113,6 +128,7 @@ public class PlayerTestScreen extends ScreenAdapter {
 
     private final ObjectMap<String, Vector3> graphNodePositions = new ObjectMap<>();
     private final Array<String> lastRevealedNodeIds = new Array<>();
+    private final Array<ConsumablePickup> worldConsumablePickups = new Array<>();
     private final Array<CarriableItem> worldCarriableItems = new Array<>();
     private final ObjectMap<CarriableItem, Mesh> carriableMeshes = new ObjectMap<>();
     private final ObjectMap<CarriableItem, Matrix4> carriableTransforms = new ObjectMap<>();
@@ -135,25 +151,34 @@ public class PlayerTestScreen extends ScreenAdapter {
     private Mesh fullscreenQuadMesh;
     private ShaderProgram worldShader;
     private ShaderProgram playerShaderProgram;
-    private ShaderProgram vhsShader;
-    private FrameBuffer sceneFbo;
+    private BodyCamVHSShaderLoader bodyCamShaderLoader;
+    private BodyCamPassFrameBuffer bodyCamFrameBuffer;
+    private BodyCamVHSVisualizer bodyCamVisualizer;
+    private BodyCamVHSSettings bodyCamSettings;
+    private BlindEffectRevealConfig blindEffectConfig;
+    private BlindEffectController blindEffectController;
+    private final SimplePanicModel panicModel = new SimplePanicModel();
+    private final BlindFogUniformUpdater blindFogUniformUpdater = new BlindFogUniformUpdater();
     private ShapeRenderer shapeRenderer;
+    private SpriteBatch hudSpriteBatch;
+    private BitmapFont hudFont;
+    private RealtimeMicSystem realtimeMicSystem;
 
     private float elapsedSeconds;
     private float currentFov = BASE_FOV;
-    private float vhsStrength = 0.75f;
     private float revealedFlashRemaining;
     private float inventoryFullMessageRemaining;
     private int pendingScrollSteps;
     private boolean showGraphDebug;
-
-    private int fboWidth = 1;
-    private int fboHeight = 1;
+    private boolean showBlindRadiusDebug;
+    private boolean showBodyCamHud = true;
+    private int selectedBodyCamParameter;
+    private float lastSoundIntensity;
 
     // Scene constants
     private static final float FLOOR_WIDTH = 24.0f;
     private static final float FLOOR_LENGTH = 24.0f;
-    private static final float WALL_HEIGHT = 3.0f;
+    private static final float WALL_HEIGHT = 5.0f;
     private static final float EYE_HEIGHT = 1.6f;
     private static final float CRATE_SIZE = 0.5f;
     private static final float INTERACTION_RANGE = 2.5f;
@@ -173,10 +198,25 @@ public class PlayerTestScreen extends ScreenAdapter {
     private static final float RUN_FOV = 85.0f;
     private static final float FOV_LERP_SPEED = 6.5f;
 
-    // VHS controls
+    // Body-cam VHS controls
     private static final float VHS_STRENGTH_STEP = 0.05f;
     private static final float VHS_STRENGTH_MIN = 0.0f;
     private static final float VHS_STRENGTH_MAX = 1.0f;
+    private static final float BODCAM_TUNING_STEP = 0.02f;
+    private static final float BODCAM_TUNING_STEP_COARSE = 0.10f;
+
+    private static final int BODYCAM_PARAM_FOV = 0;
+    private static final int BODYCAM_PARAM_BARREL = 1;
+    private static final int BODYCAM_PARAM_CHROMA = 2;
+    private static final int BODYCAM_PARAM_VIGNETTE_RADIUS = 3;
+    private static final int BODYCAM_PARAM_VIGNETTE_SOFTNESS = 4;
+    private static final int BODYCAM_PARAM_SCANLINE = 5;
+    private static final int BODYCAM_PARAM_TAPE_NOISE = 6;
+    private static final int BODYCAM_PARAM_CRT_CURVE = 7;
+    private static final int BODYCAM_PARAM_COUNT = 8;
+
+    private static final int MAX_FLARE_COUNT = 3;
+    private static final float PICKUP_RADIUS = 1.75f;
 
     // HUD / debug overlay
     private static final float CROSSHAIR_HALF_SIZE = 7.0f;
@@ -208,10 +248,35 @@ public class PlayerTestScreen extends ScreenAdapter {
 
         loadWorldShader();
         loadPlayerShader();
-        loadVhsShader();
+        bodyCamShaderLoader = new BodyCamVHSShaderLoader(
+            "shaders/vert/body_cam_vhs.vert",
+            "shaders/frag/body_cam_vhs.frag"
+        );
+        bodyCamFrameBuffer = new BodyCamPassFrameBuffer();
+        bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
+        blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
+        blindEffectController = new BlindEffectController(blindEffectConfig, panicModel);
+        BodyCamVHSAnimator bodyCamAnimator = new BodyCamVHSAnimator();
 
         fullscreenQuadMesh = createFullscreenQuadMesh();
+        bodyCamVisualizer = new BodyCamVHSVisualizer(
+            bodyCamFrameBuffer,
+            bodyCamShaderLoader.shader(),
+            fullscreenQuadMesh,
+            bodyCamAnimator
+        );
         shapeRenderer = new ShapeRenderer();
+        hudSpriteBatch = new SpriteBatch();
+        hudFont = new BitmapFont();
+        hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
+
+        try {
+            realtimeMicSystem = new RealtimeMicSystem(300f);
+            realtimeMicSystem.start(44100, 1024);
+        } catch (Exception e) {
+            realtimeMicSystem = null;
+            Gdx.app.log("PlayerTestScreen", "Realtime mic unavailable: " + e.getMessage());
+        }
 
         buildProceduralScene();
         initializePhysicsWorld();
@@ -225,11 +290,11 @@ public class PlayerTestScreen extends ScreenAdapter {
 
         testCrate = new TestCrate();
         playerInteractionSystem = new PlayerInteractionSystem(camera, playerController);
-        playerInteractionSystem.setPrimaryTarget(testCrate, cratePosition);
+        playerInteractionSystem.registerTarget(testCrate, cratePosition);
         playerInteractionSystem.setInteractionRange(INTERACTION_RANGE);
         playerInteractionSystem.setInteractionKeyCode(Input.Keys.R);
 
-        acousticGraphEngine = new AcousticGraphEngine().buildTestGraph();
+        acousticGraphEngine = TestAcousticGraphFactory.create();
         cacheGraphNodePositions();
 
         spatialCueController = new SpatialCueController();
@@ -242,8 +307,16 @@ public class PlayerTestScreen extends ScreenAdapter {
         );
         physicsNoiseEmitter = new PhysicsNoiseEmitter(soundPropagationOrchestrator);
         impactListener = new ImpactListener(physicsNoiseEmitter, this::findNearestNodeId);
+        soundPropagationOrchestrator.registerDirectorListener((soundEventData, propagationResult) -> {
+            lastSoundIntensity = Math.max(lastSoundIntensity, soundEventData.baseIntensity());
+            boolean sonarTriggered = blindEffectController.onSoundEvent(soundEventData);
+            if (sonarTriggered) {
+                cacheRevealedNodesForFlash(propagationResult);
+            }
+        });
 
         spawnInitialCarriableItems();
+        spawnInitialConsumablePickups();
 
         playerFootstepSoundEmitter = new PlayerFootstepSoundEmitter(
             playerController,
@@ -269,7 +342,7 @@ public class PlayerTestScreen extends ScreenAdapter {
 
         testCrate.setInteractionListener(player -> emitCrateInteractionSound());
 
-        recreateSceneFbo(Gdx.graphics.getBackBufferWidth(), Gdx.graphics.getBackBufferHeight());
+        recreateBodyCamFrameBuffers(Gdx.graphics.getBackBufferWidth(), Gdx.graphics.getBackBufferHeight());
         updateHudProjection(Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
 
         Gdx.input.setInputProcessor(new com.badlogic.gdx.InputAdapter() {
@@ -354,16 +427,6 @@ public class PlayerTestScreen extends ScreenAdapter {
         }
     }
 
-    private void loadVhsShader() {
-        vhsShader = new ShaderProgram(
-            Gdx.files.internal("shaders/vert/vhs_postprocess.vert"),
-            Gdx.files.internal("shaders/frag/vhs_postprocess.frag")
-        );
-        if (!vhsShader.isCompiled()) {
-            throw new GdxRuntimeException("VHS shader failed to compile: " + vhsShader.getLog());
-        }
-    }
-
     private Mesh createFullscreenQuadMesh() {
         Mesh mesh = new Mesh(
             true,
@@ -390,19 +453,8 @@ public class PlayerTestScreen extends ScreenAdapter {
         return mesh;
     }
 
-    private void recreateSceneFbo(int width, int height) {
-        fboWidth = Math.max(1, width);
-        fboHeight = Math.max(1, height);
-
-        if (sceneFbo != null) {
-            sceneFbo.dispose();
-        }
-
-        sceneFbo = new FrameBuffer(Pixmap.Format.RGBA8888, fboWidth, fboHeight, true);
-        sceneFbo.getColorBufferTexture().setFilter(
-            com.badlogic.gdx.graphics.Texture.TextureFilter.Linear,
-            com.badlogic.gdx.graphics.Texture.TextureFilter.Linear
-        );
+    private void recreateBodyCamFrameBuffers(int width, int height) {
+        bodyCamFrameBuffer.resize(width, height);
     }
 
     private void initializePhysicsWorld() {
@@ -540,6 +592,7 @@ public class PlayerTestScreen extends ScreenAdapter {
         Mesh floor = createCubeMesh(FLOOR_WIDTH, 0.1f, FLOOR_LENGTH);
         sceneMeshes.add(floor);
         sceneTransforms.add(new Matrix4().setToTranslation(centerX, -0.05f, centerZ));
+        addCollider(centerX, -0.05f, centerZ, FLOOR_WIDTH, 0.1f, FLOOR_LENGTH);
 
         Mesh wallNorth = createCubeMesh(FLOOR_WIDTH, WALL_HEIGHT, 0.2f);
         sceneMeshes.add(wallNorth);
@@ -693,8 +746,50 @@ public class PlayerTestScreen extends ScreenAdapter {
     }
 
     private void handleRuntimeInput() {
+        boolean ctrlPressed = Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT) || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT);
         if (Gdx.input.isKeyJustPressed(Input.Keys.G)) {
-            showGraphDebug = !showGraphDebug;
+            if (ctrlPressed) {
+                showBlindRadiusDebug = !showBlindRadiusDebug;
+            } else {
+                showGraphDebug = !showGraphDebug;
+            }
+        }
+
+        boolean reloadConfigPressed =
+            Gdx.input.isKeyJustPressed(Input.Keys.R) &&
+            (Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT) || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT));
+        if (reloadConfigPressed) {
+            bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
+            blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
+            blindEffectController.reloadConfig(blindEffectConfig);
+            Gdx.app.log("BodyCam", "reloaded config/body_cam_settings.json");
+            Gdx.app.log("Blind", "reloaded config/blind_effect_config.json");
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.B)) {
+            bodyCamSettings.enabled = !bodyCamSettings.enabled;
+            Gdx.app.log("BodyCam", "enabled=" + bodyCamSettings.enabled);
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F6)) {
+            showBodyCamHud = !showBodyCamHud;
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F10)) {
+            if (Gdx.app.getApplicationListener() instanceof Game game) {
+                game.setScreen(new UniversalTestScene());
+                return;
+            }
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.X)) {
+            emitItemEvent(SoundEvent.CLAP_SHOUT, tmpDropPosition.set(camera.position).mulAdd(camera.direction, 1.2f), 0.9f);
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.LEFT_BRACKET)) {
+            selectedBodyCamParameter = (selectedBodyCamParameter - 1 + BODYCAM_PARAM_COUNT) % BODYCAM_PARAM_COUNT;
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.RIGHT_BRACKET)) {
+            selectedBodyCamParameter = (selectedBodyCamParameter + 1) % BODYCAM_PARAM_COUNT;
         }
 
         boolean increasePressed =
@@ -706,12 +801,49 @@ public class PlayerTestScreen extends ScreenAdapter {
             Gdx.input.isKeyJustPressed(Input.Keys.NUMPAD_SUBTRACT);
 
         if (increasePressed) {
-            vhsStrength = MathUtils.clamp(vhsStrength + VHS_STRENGTH_STEP, VHS_STRENGTH_MIN, VHS_STRENGTH_MAX);
-            Gdx.app.log("VHS", "strength=" + vhsStrength);
+            adjustSelectedBodyCamParameter(+1.0f);
         } else if (decreasePressed) {
-            vhsStrength = MathUtils.clamp(vhsStrength - VHS_STRENGTH_STEP, VHS_STRENGTH_MIN, VHS_STRENGTH_MAX);
-            Gdx.app.log("VHS", "strength=" + vhsStrength);
+            adjustSelectedBodyCamParameter(-1.0f);
         }
+    }
+
+    private void adjustSelectedBodyCamParameter(float direction) {
+        float baseStep =
+            (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT))
+                ? BODCAM_TUNING_STEP_COARSE
+                : BODCAM_TUNING_STEP;
+
+        switch (selectedBodyCamParameter) {
+            case BODYCAM_PARAM_FOV:
+                bodyCamSettings.fovDiagonalDegrees += direction * (baseStep * 100.0f);
+                break;
+            case BODYCAM_PARAM_BARREL:
+                bodyCamSettings.barrelDistortionStrength += direction * baseStep;
+                break;
+            case BODYCAM_PARAM_CHROMA:
+                bodyCamSettings.chromaticAberrationPixels += direction * (baseStep * 10.0f);
+                break;
+            case BODYCAM_PARAM_VIGNETTE_RADIUS:
+                bodyCamSettings.vignetteRadius += direction * baseStep;
+                break;
+            case BODYCAM_PARAM_VIGNETTE_SOFTNESS:
+                bodyCamSettings.vignetteSoftness += direction * baseStep;
+                break;
+            case BODYCAM_PARAM_SCANLINE:
+                bodyCamSettings.vhsScanLineStrength += direction * baseStep;
+                break;
+            case BODYCAM_PARAM_TAPE_NOISE:
+                bodyCamSettings.vhsTapeNoiseAmount += direction * baseStep;
+                break;
+            case BODYCAM_PARAM_CRT_CURVE:
+                bodyCamSettings.crtCurveAmount += direction * baseStep;
+                break;
+            default:
+                break;
+        }
+
+        bodyCamSettings.validate();
+        Gdx.app.log("BodyCam", "tuned " + bodyCamParameterLabel(selectedBodyCamParameter) + "=" + bodyCamParameterValue(selectedBodyCamParameter));
     }
 
     private void updateGameplaySystems(float delta) {
@@ -723,11 +855,28 @@ public class PlayerTestScreen extends ScreenAdapter {
         playerInteractionSystem.update();
         playerFeatureExtractor.update(delta, playerController);
         playerFootstepSoundEmitter.update(delta, elapsedSeconds);
+
+        if (realtimeMicSystem != null) {
+            RealtimeMicSystem.Frame micFrame = realtimeMicSystem.update(delta);
+            if (micFrame != null && micFrame.shouldEmitSignal()) {
+                float intensity = 0.4f + micFrame.sample().normalizedLevel() * 0.6f;
+                emitItemEvent(SoundEvent.CLAP_SHOUT, camera.position, intensity);
+            }
+        }
+
         soundPropagationOrchestrator.update(delta);
 
         playerController.getPosition(playerWorldPosition);
         String listenerNodeId = findNearestNodeId(playerWorldPosition);
         spatialCueController.setListenerNode(listenerNodeId, playerWorldPosition);
+
+        lastSoundIntensity = Math.max(0f, lastSoundIntensity - (delta * 0.9f));
+        float threatDistance = playerWorldPosition.dst(cratePosition);
+        panicModel.setThreatDistanceMeters(threatDistance);
+        panicModel.setLoudSoundIntensity(lastSoundIntensity);
+        panicModel.setHealth(100f, 100f);
+        panicModel.update(delta);
+        blindEffectController.update(delta);
     }
 
     private void updateCameraFov(float delta) {
@@ -739,16 +888,19 @@ public class PlayerTestScreen extends ScreenAdapter {
     }
 
     private void renderSceneToFbo() {
-        sceneFbo.begin();
-        Gdx.gl.glViewport(0, 0, fboWidth, fboHeight);
+        bodyCamFrameBuffer.beginScenePass();
+        Gdx.gl.glViewport(0, 0, bodyCamFrameBuffer.width(), bodyCamFrameBuffer.height());
         Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
         Gdx.gl.glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
 
         renderWorldMeshes();
+        if (showBlindRadiusDebug) {
+            renderBlindRadiusDebug3d();
+        }
         renderPlayerViewModel();
 
-        sceneFbo.end();
+        bodyCamFrameBuffer.endScenePass();
     }
 
     private void renderWorldMeshes() {
@@ -761,12 +913,15 @@ public class PlayerTestScreen extends ScreenAdapter {
         worldShader.setUniformf("u_shadowColor", 0.08f, 0.09f, 0.12f);
         worldShader.setUniformf("u_shadowStrength", 0.5f);
         worldShader.setUniformf("u_fogColor", 0.06f, 0.07f, 0.10f);
-        worldShader.setUniformf("u_blindFogColor", 0.02f, 0.02f, 0.03f);
         worldShader.setUniformf("u_fogStart", 8.0f);
         worldShader.setUniformf("u_fogEnd", 42.0f);
-        worldShader.setUniformf("u_blindFogStart", 18.0f);
-        worldShader.setUniformf("u_blindFogEnd", 36.0f);
-        worldShader.setUniformf("u_blindFogStrength", 0.28f);
+        blindFogUniformUpdater.updateBlindUniforms(
+            worldShader,
+            blindEffectController.fogStartMeters(),
+            blindEffectController.fogEndMeters(),
+            blindEffectController.fogStrength(),
+            blindEffectController.fogColor()
+        );
         worldShader.setUniformf("u_time", elapsedSeconds);
         worldShader.setUniformf("u_scanlineStrength", 0.12f);
         worldShader.setUniformf("u_ditherLevels", 8.0f);
@@ -827,41 +982,95 @@ public class PlayerTestScreen extends ScreenAdapter {
         playerShaderProgram.setUniformf("u_ambientColor", 0.28f, 0.3f, 0.32f);
         playerShaderProgram.setUniformf("u_rimColor", 0.85f, 0.95f, 1.0f);
         playerShaderProgram.setUniformf("u_rimStrength", 0.28f);
+        blindFogUniformUpdater.updateBlindUniforms(
+            playerShaderProgram,
+            blindEffectController.fogStartMeters(),
+            blindEffectController.fogEndMeters(),
+            blindEffectController.fogStrength(),
+            blindEffectController.fogColor()
+        );
         playerViewModelMesh.render(playerShaderProgram, GL20.GL_TRIANGLES);
         Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
     }
 
+    private void renderBlindRadiusDebug3d() {
+        playerController.getPosition(playerWorldPosition);
+        float radius = blindEffectController.visibilityMeters();
+        shapeRenderer.setProjectionMatrix(camera.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+        shapeRenderer.setColor(0.98f, 0.84f, 0.3f, 0.95f);
+        int segments = 28;
+        float previousX = playerWorldPosition.x + radius;
+        float previousZ = playerWorldPosition.z;
+        float y = Math.max(0.05f, playerWorldPosition.y);
+        for (int i = 1; i <= segments; i++) {
+            float angle = (i * 360f) / segments;
+            float x = playerWorldPosition.x + MathUtils.cosDeg(angle) * radius;
+            float z = playerWorldPosition.z + MathUtils.sinDeg(angle) * radius;
+            shapeRenderer.line(previousX, y, previousZ, x, y, z);
+            previousX = x;
+            previousZ = z;
+        }
+        shapeRenderer.end();
+    }
+
     private void renderPostProcessToBackBuffer() {
-        int backBufferWidth = Gdx.graphics.getBackBufferWidth();
-        int backBufferHeight = Gdx.graphics.getBackBufferHeight();
-
-        Gdx.gl.glBindFramebuffer(GL20.GL_FRAMEBUFFER, 0);
-        Gdx.gl.glViewport(0, 0, backBufferWidth, backBufferHeight);
-        Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
-        Gdx.gl.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
-
-        sceneFbo.getColorBufferTexture().bind(0);
-
-        vhsShader.bind();
-        vhsShader.setUniformi("u_texture", 0);
-        vhsShader.setUniformf("u_screenSize", (float) backBufferWidth, (float) backBufferHeight);
-        vhsShader.setUniformf("u_time", elapsedSeconds);
-        vhsShader.setUniformf("u_vhsStrength", vhsStrength);
-
-        fullscreenQuadMesh.render(vhsShader, GL20.GL_TRIANGLES);
-
-        Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
+        bodyCamSettings.validate();
+        bodyCamVisualizer.renderToBackBuffer(elapsedSeconds, bodyCamSettings);
     }
 
     private void renderHudOverlays() {
         shapeRenderer.setProjectionMatrix(hudProjection);
         renderCrosshair();
         renderInventoryBar();
+        renderStaminaBar();
+        renderVoiceMeter();
+        renderBodyCamTuningOverlay();
 
         if (showGraphDebug) {
             renderAcousticGraphOverlay();
         }
+    }
+
+    private void renderStaminaBar() {
+        if (playerController == null || shapeRenderer == null) {
+            return;
+        }
+
+        float barWidth = 180f;
+        float barHeight = 10f;
+        float x = (Gdx.graphics.getWidth() - barWidth) * 0.5f;
+        float y = 80f;
+        float fill = MathUtils.clamp(playerController.getStamina() / playerController.getMaxStamina(), 0f, 1f);
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.setColor(0.15f, 0.15f, 0.2f, 0.8f);
+        shapeRenderer.rect(x, y, barWidth, barHeight);
+
+        float r = 1f - fill;
+        float g = fill;
+        shapeRenderer.setColor(r * 0.9f, g * 0.8f, 0.1f, 0.95f);
+        shapeRenderer.rect(x, y, barWidth * fill, barHeight);
+        shapeRenderer.end();
+    }
+
+    private void renderVoiceMeter() {
+        if (realtimeMicSystem == null || realtimeMicSystem.lastFrame() == null || shapeRenderer == null) {
+            return;
+        }
+
+        float level = MathUtils.clamp(realtimeMicSystem.lastFrame().sample().normalizedLevel(), 0f, 1f);
+        float barHeight = 80f;
+        float barWidth = 8f;
+        float x = 14f;
+        float y = 20f;
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.setColor(0.1f, 0.1f, 0.15f, 0.8f);
+        shapeRenderer.rect(x, y, barWidth, barHeight);
+        shapeRenderer.setColor(0.2f, 0.9f, 0.4f, 0.9f);
+        shapeRenderer.rect(x, y, barWidth, barHeight * level);
+        shapeRenderer.end();
     }
 
     private void renderInventoryBar() {
@@ -899,10 +1108,90 @@ public class PlayerTestScreen extends ScreenAdapter {
         shapeRenderer.end();
     }
 
+    private void renderBodyCamTuningOverlay() {
+        if (!showBodyCamHud || hudSpriteBatch == null || hudFont == null) {
+            return;
+        }
+
+        float startX = 16.0f;
+        float startY = Gdx.graphics.getHeight() - 14.0f;
+        float lineHeight = 16.0f;
+
+        hudSpriteBatch.begin();
+        hudFont.draw(hudSpriteBatch, "BODYCAM HUD [F6 toggle] [[ ] select] [+/- adjust] [Shift=coarse] [B on/off]", startX, startY);
+        hudFont.draw(hudSpriteBatch, "Enabled: " + bodyCamSettings.enabled + " (Ctrl+R reload JSON)", startX, startY - lineHeight);
+        hudFont.draw(hudSpriteBatch, "BlindVis=" + String.format("%.2f", blindEffectController.visibilityMeters()) + "m [Ctrl+G radius] [X sonar]", startX, startY - (lineHeight * 2f));
+
+        for (int paramIndex = 0; paramIndex < BODYCAM_PARAM_COUNT; paramIndex++) {
+            String prefix = paramIndex == selectedBodyCamParameter ? "> " : "  ";
+            String line = prefix + bodyCamParameterLabel(paramIndex) + ": " + bodyCamParameterValue(paramIndex);
+            hudFont.draw(hudSpriteBatch, line, startX, startY - ((paramIndex + 3) * lineHeight));
+        }
+
+        Array<String> blindLines = blindEffectController.debugLines();
+        float blindStartY = startY - ((BODYCAM_PARAM_COUNT + 4) * lineHeight);
+        for (int i = 0; i < blindLines.size; i++) {
+            hudFont.draw(hudSpriteBatch, blindLines.get(i), startX, blindStartY - (i * lineHeight));
+        }
+        hudSpriteBatch.end();
+    }
+
+    private String bodyCamParameterLabel(int parameterIndex) {
+        switch (parameterIndex) {
+            case BODYCAM_PARAM_FOV:
+                return "fovDiagonalDegrees";
+            case BODYCAM_PARAM_BARREL:
+                return "barrelDistortionStrength";
+            case BODYCAM_PARAM_CHROMA:
+                return "chromaticAberrationPixels";
+            case BODYCAM_PARAM_VIGNETTE_RADIUS:
+                return "vignetteRadius";
+            case BODYCAM_PARAM_VIGNETTE_SOFTNESS:
+                return "vignetteSoftness";
+            case BODYCAM_PARAM_SCANLINE:
+                return "vhsScanLineStrength";
+            case BODYCAM_PARAM_TAPE_NOISE:
+                return "vhsTapeNoiseAmount";
+            case BODYCAM_PARAM_CRT_CURVE:
+                return "crtCurveAmount";
+            default:
+                return "unknown";
+        }
+    }
+
+    private String bodyCamParameterValue(int parameterIndex) {
+        switch (parameterIndex) {
+            case BODYCAM_PARAM_FOV:
+                return String.format("%.1f", bodyCamSettings.fovDiagonalDegrees);
+            case BODYCAM_PARAM_BARREL:
+                return String.format("%.3f", bodyCamSettings.barrelDistortionStrength);
+            case BODYCAM_PARAM_CHROMA:
+                return String.format("%.2f", bodyCamSettings.chromaticAberrationPixels);
+            case BODYCAM_PARAM_VIGNETTE_RADIUS:
+                return String.format("%.3f", bodyCamSettings.vignetteRadius);
+            case BODYCAM_PARAM_VIGNETTE_SOFTNESS:
+                return String.format("%.3f", bodyCamSettings.vignetteSoftness);
+            case BODYCAM_PARAM_SCANLINE:
+                return String.format("%.3f", bodyCamSettings.vhsScanLineStrength);
+            case BODYCAM_PARAM_TAPE_NOISE:
+                return String.format("%.3f", bodyCamSettings.vhsTapeNoiseAmount);
+            case BODYCAM_PARAM_CRT_CURVE:
+                return String.format("%.3f", bodyCamSettings.crtCurveAmount);
+            default:
+                return "n/a";
+        }
+    }
+
     private void spawnInitialCarriableItems() {
         spawnCarriableItem(ItemType.METAL_PIPE, FLOOR_WIDTH * 0.5f + 2.5f, 0.4f, FLOOR_LENGTH * 0.5f - 3.0f, 0.18f, 0.9f, 0.18f);
         spawnCarriableItem(ItemType.GLASS_BOTTLE, FLOOR_WIDTH * 0.5f - 2.5f, 0.28f, FLOOR_LENGTH * 0.5f - 2.2f, 0.15f, 0.55f, 0.15f);
         spawnCarriableItem(ItemType.CARDBOARD_BOX, FLOOR_WIDTH * 0.5f + 0.7f, 0.38f, FLOOR_LENGTH * 0.5f + 1.8f, 0.45f, 0.45f, 0.45f);
+    }
+
+    private void spawnInitialConsumablePickups() {
+        worldConsumablePickups.add(new ConsumablePickup(ItemType.FLARE, new Vector3(FLOOR_WIDTH * 0.5f - 5.0f, 0.2f, FLOOR_LENGTH * 0.5f + 4.0f)));
+        worldConsumablePickups.add(new ConsumablePickup(ItemType.FLARE, new Vector3(FLOOR_WIDTH * 0.5f + 4.8f, 0.2f, FLOOR_LENGTH * 0.5f + 5.2f)));
+        worldConsumablePickups.add(new ConsumablePickup(ItemType.NOISE_DECOY, new Vector3(FLOOR_WIDTH * 0.5f + 1.0f, 0.2f, FLOOR_LENGTH * 0.5f - 6.5f)));
     }
 
     private void spawnCarriableItem(
@@ -1041,6 +1330,10 @@ public class PlayerTestScreen extends ScreenAdapter {
     }
 
     private void tryPickupNearestCarriable() {
+        if (tryPickupNearestConsumable()) {
+            return;
+        }
+
         CarriableItem nearestCarriable = null;
         float nearestDistanceSquared = Float.POSITIVE_INFINITY;
 
@@ -1073,6 +1366,55 @@ public class PlayerTestScreen extends ScreenAdapter {
         }
     }
 
+    private boolean tryPickupNearestConsumable() {
+        ConsumablePickup nearest = null;
+        float nearestDistanceSquared = Float.POSITIVE_INFINITY;
+
+        for (ConsumablePickup pickup : worldConsumablePickups) {
+            if (pickup.collected) {
+                continue;
+            }
+
+            float distanceSquared = pickup.position.dst2(camera.position);
+            if (distanceSquared > (PICKUP_RADIUS * PICKUP_RADIUS)) {
+                continue;
+            }
+
+            if (distanceSquared < nearestDistanceSquared) {
+                nearestDistanceSquared = distanceSquared;
+                nearest = pickup;
+            }
+        }
+
+        if (nearest == null) {
+            return false;
+        }
+
+        if (nearest.itemType == ItemType.FLARE && countInventoryItem(ItemType.FLARE) >= MAX_FLARE_COUNT) {
+            inventoryFullMessageRemaining = INVENTORY_FULL_MESSAGE_DURATION;
+            return true;
+        }
+
+        boolean added = inventorySystem.addItem(ItemDefinition.create(nearest.itemType));
+        if (added) {
+            nearest.collected = true;
+        } else {
+            inventoryFullMessageRemaining = INVENTORY_FULL_MESSAGE_DURATION;
+        }
+        return true;
+    }
+
+    private int countInventoryItem(ItemType itemType) {
+        int total = 0;
+        for (int slotIndex = 0; slotIndex < InventorySystem.SLOT_COUNT; slotIndex++) {
+            InventorySystem.InventorySlotEntry slotEntry = inventorySystem.getSlotEntry(slotIndex);
+            if (slotEntry != null && slotEntry.itemDefinition().itemType() == itemType) {
+                total += slotEntry.count();
+            }
+        }
+        return total;
+    }
+
     private void handleUseActiveItem() {
         InventorySystem.InventorySlotEntry activeEntry = inventorySystem.getActiveSlotEntry();
         if (activeEntry == null) {
@@ -1083,6 +1425,7 @@ public class PlayerTestScreen extends ScreenAdapter {
         if (itemDefinition.itemType() == ItemType.NOISE_DECOY) {
             emitItemEvent(SoundEvent.NOISE_DECOY, tmpDropPosition.set(camera.position).mulAdd(camera.direction, 4.0f), 0.70f);
         } else if (itemDefinition.itemType() == ItemType.FLARE) {
+            blindEffectController.triggerFlareReveal();
             emitItemEvent(SoundEvent.OBJECT_DROP_OR_BREAK, tmpDropPosition.set(camera.position), 0.30f);
         }
 
@@ -1210,15 +1553,7 @@ public class PlayerTestScreen extends ScreenAdapter {
     }
 
     private boolean isCrateInRangeAndFacing() {
-        tmpToCrate.set(cratePosition).sub(camera.position);
-        float distance = tmpToCrate.len();
-        if (distance <= 0.0001f || distance > INTERACTION_RANGE) {
-            return false;
-        }
-
-        tmpToCrate.scl(1.0f / distance);
-        float facingDot = tmpForward.set(camera.direction).nor().dot(tmpToCrate);
-        return facingDot >= INTERACTION_FACING_DOT;
+        return playerInteractionSystem.hasTargetInRangeAndFacing();
     }
 
     private void emitCrateInteractionSound() {
@@ -1267,6 +1602,17 @@ public class PlayerTestScreen extends ScreenAdapter {
         hudProjection.setToOrtho2D(0.0f, 0.0f, width, height);
     }
 
+    private static final class ConsumablePickup {
+        private final ItemType itemType;
+        private final Vector3 position;
+        private boolean collected;
+
+        private ConsumablePickup(ItemType itemType, Vector3 position) {
+            this.itemType = itemType;
+            this.position = new Vector3(position);
+        }
+    }
+
     @Override
     public void resize(int width, int height) {
         camera.viewportWidth = width;
@@ -1274,11 +1620,15 @@ public class PlayerTestScreen extends ScreenAdapter {
         camera.update();
 
         updateHudProjection(width, height);
-        recreateSceneFbo(Gdx.graphics.getBackBufferWidth(), Gdx.graphics.getBackBufferHeight());
+        recreateBodyCamFrameBuffers(Gdx.graphics.getBackBufferWidth(), Gdx.graphics.getBackBufferHeight());
     }
 
     @Override
     public void dispose() {
+        if (realtimeMicSystem != null) {
+            realtimeMicSystem.stop();
+        }
+
         for (Mesh mesh : sceneMeshes) {
             mesh.dispose();
         }
@@ -1347,14 +1697,20 @@ public class PlayerTestScreen extends ScreenAdapter {
         if (playerShaderProgram != null) {
             playerShaderProgram.dispose();
         }
-        if (vhsShader != null) {
-            vhsShader.dispose();
+        if (bodyCamShaderLoader != null) {
+            bodyCamShaderLoader.dispose();
         }
-        if (sceneFbo != null) {
-            sceneFbo.dispose();
+        if (bodyCamFrameBuffer != null) {
+            bodyCamFrameBuffer.dispose();
         }
         if (shapeRenderer != null) {
             shapeRenderer.dispose();
+        }
+        if (hudSpriteBatch != null) {
+            hudSpriteBatch.dispose();
+        }
+        if (hudFont != null) {
+            hudFont.dispose();
         }
         if (spatialCueController != null) {
             spatialCueController.dispose();

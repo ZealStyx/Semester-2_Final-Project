@@ -4,6 +4,8 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.graphics.PerspectiveCamera;
 import com.badlogic.gdx.math.Vector3;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Handles player interaction checks and dispatches interaction callbacks.
@@ -17,9 +19,11 @@ public class PlayerInteractionSystem {
 
     private final PerspectiveCamera camera;
     private final PlayerController playerController;
+    private final List<InteractionTarget> targets = new ArrayList<>();
+    private final Vector3 playerPosition = new Vector3();
+    private final Vector3 toTarget = new Vector3();
+    private final Vector3 cameraDirection = new Vector3();
 
-    private Interactable primaryTarget;
-    private final Vector3 primaryTargetPosition = new Vector3();
     private float interactionRange = DEFAULT_INTERACTION_RANGE;
     private int interactionKeyCode = Input.Keys.F;
 
@@ -28,9 +32,11 @@ public class PlayerInteractionSystem {
         this.playerController = playerController;
     }
 
-    public void setPrimaryTarget(Interactable target, Vector3 targetPosition) {
-        this.primaryTarget = target;
-        this.primaryTargetPosition.set(targetPosition);
+    public void registerTarget(Interactable target, Vector3 targetPosition) {
+        if (target == null || targetPosition == null) {
+            return;
+        }
+        targets.add(new InteractionTarget(target, targetPosition));
     }
 
     public void setInteractionRange(float interactionRange) {
@@ -43,28 +49,68 @@ public class PlayerInteractionSystem {
 
     public void update() {
         if (Gdx.input.isKeyJustPressed(interactionKeyCode)) {
-            tryInteractWithPrimaryTarget();
+            tryInteractWithBestTarget();
         }
     }
 
-    private void tryInteractWithPrimaryTarget() {
-        if (primaryTarget == null) {
+    public boolean hasTargetInRangeAndFacing() {
+        return findBestTarget() != null;
+    }
+
+    private void tryInteractWithBestTarget() {
+        InteractionTarget target = findBestTarget();
+        if (target == null) {
             return;
         }
 
-        Vector3 playerPos = playerController.getPosition();
-        Vector3 toTarget = primaryTargetPosition.cpy().sub(playerPos);
-        float distance = toTarget.len();
-        if (distance > interactionRange || distance <= 0.0001f) {
-            return;
+        target.interactable.onInteract(playerController);
+    }
+
+    private InteractionTarget findBestTarget() {
+        if (targets.isEmpty()) {
+            return null;
         }
 
-        toTarget.nor();
-        float facingDot = camera.direction.cpy().nor().dot(toTarget);
-        if (facingDot < MIN_FACING_DOT) {
-            return;
+        float rangeSquared = interactionRange * interactionRange;
+        float bestFacing = MIN_FACING_DOT;
+        float bestDistanceSquared = Float.POSITIVE_INFINITY;
+        InteractionTarget bestTarget = null;
+
+        playerController.getPosition(playerPosition);
+        cameraDirection.set(camera.direction).nor();
+
+        for (int i = 0; i < targets.size(); i++) {
+            InteractionTarget target = targets.get(i);
+            toTarget.set(target.position).sub(playerPosition);
+            float distanceSquared = toTarget.len2();
+            if (distanceSquared <= 0.00000001f || distanceSquared > rangeSquared) {
+                continue;
+            }
+
+            float distance = (float) Math.sqrt(distanceSquared);
+            toTarget.scl(1f / distance);
+            float facingDot = cameraDirection.dot(toTarget);
+            if (facingDot < MIN_FACING_DOT) {
+                continue;
+            }
+
+            if (facingDot > bestFacing || (Math.abs(facingDot - bestFacing) <= 0.0001f && distanceSquared < bestDistanceSquared)) {
+                bestFacing = facingDot;
+                bestDistanceSquared = distanceSquared;
+                bestTarget = target;
+            }
         }
 
-        primaryTarget.onInteract(playerController);
+        return bestTarget;
+    }
+
+    private static final class InteractionTarget {
+        private final Interactable interactable;
+        private final Vector3 position = new Vector3();
+
+        private InteractionTarget(Interactable interactable, Vector3 position) {
+            this.interactable = interactable;
+            this.position.set(position);
+        }
     }
 }

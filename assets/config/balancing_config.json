@@ -15,7 +15,7 @@
     "CLAP_SHOUT": {
       "baseIntensity": 0.9,
       "cooldownSeconds": 0.9,
-      "pulseLifetimeSeconds": 1.1
+      "pulseLifetimeSeconds": 1.6
     },
     "ENEMY_SCREAM": {
       "baseIntensity": 0.8,
@@ -26,6 +26,16 @@
       "baseIntensity": 1.0,
       "cooldownSeconds": 1.5,
       "pulseLifetimeSeconds": 1.2
+    },
+    "NOISE_DECOY": {
+      "baseIntensity": 0.8,
+      "cooldownSeconds": 0.0,
+      "pulseLifetimeSeconds": 1.0
+    },
+    "MIC_INPUT": {
+      "baseIntensity": 0.0,
+      "cooldownSeconds": 0.08,
+      "pulseLifetimeSeconds": 1.0
     }
   }
 }

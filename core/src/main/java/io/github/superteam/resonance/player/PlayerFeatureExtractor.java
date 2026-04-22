@@ -39,6 +39,7 @@ public final class PlayerFeatureExtractor {
     private final float[] yawRateSamples = new float[MAX_SAMPLES];
     private final byte[] stationarySamples = new byte[MAX_SAMPLES];
     private final byte[] backtrackSamples = new byte[MAX_SAMPLES];
+    private final int[] collisionSamples = new int[MAX_SAMPLES];
     private final List<PlayerFeaturesListener> listeners = new ArrayList<>();
 
     private final Vector3 currentPosition = new Vector3();
@@ -106,6 +107,7 @@ public final class PlayerFeatureExtractor {
 
         byte stationary = horizontalSpeed < STATIONARY_SPEED_THRESHOLD ? (byte) 1 : (byte) 0;
         byte backtrack = 0;
+        int collisions = playerController.getAndResetCollisionCount();
 
         if (hasPreviousPosition) {
             movementDirection.set(currentPosition).sub(previousPosition);
@@ -118,11 +120,11 @@ public final class PlayerFeatureExtractor {
         previousPosition.set(currentPosition);
         hasPreviousPosition = true;
 
-        appendSample(elapsedSeconds, horizontalSpeed, yawRate, stationary, backtrack);
+        appendSample(elapsedSeconds, horizontalSpeed, yawRate, stationary, backtrack, collisions);
         evictExpiredSamples();
     }
 
-    private void appendSample(float sampleTime, float speed, float yawRate, byte stationary, byte backtrack) {
+    private void appendSample(float sampleTime, float speed, float yawRate, byte stationary, byte backtrack, int collisions) {
         int writeIndex;
         if (sampleCount < MAX_SAMPLES) {
             writeIndex = (headIndex + sampleCount) % MAX_SAMPLES;
@@ -137,6 +139,7 @@ public final class PlayerFeatureExtractor {
         yawRateSamples[writeIndex] = yawRate;
         stationarySamples[writeIndex] = stationary;
         backtrackSamples[writeIndex] = backtrack;
+        collisionSamples[writeIndex] = collisions;
     }
 
     private void evictExpiredSamples() {
@@ -155,6 +158,7 @@ public final class PlayerFeatureExtractor {
         float yawRateSum = 0f;
         int stationaryCount = 0;
         int backtrackCount = 0;
+        int collisionCount = 0;
 
         for (int i = 0; i < sampleCount; i++) {
             int index = (headIndex + i) % MAX_SAMPLES;
@@ -162,6 +166,7 @@ public final class PlayerFeatureExtractor {
             yawRateSum += Math.abs(yawRateSamples[index]);
             stationaryCount += stationarySamples[index];
             backtrackCount += backtrackSamples[index];
+            collisionCount += collisionSamples[index] > 0 ? 1 : 0;
         }
 
         float invCount = 1f / sampleCount;
@@ -169,7 +174,7 @@ public final class PlayerFeatureExtractor {
             speedSum * invCount,
             yawRateSum * invCount,
             stationaryCount * invCount,
-            0f,
+            collisionCount * invCount,
             backtrackCount * invCount
         );
     }

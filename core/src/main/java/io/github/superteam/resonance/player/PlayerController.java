@@ -48,6 +48,10 @@ public class PlayerController {
     private static final float RUN_BOB_AMPLITUDE = 0.05f;
     private static final float SLOW_WALK_BOB_AMPLITUDE = 0.02f;
     private static final float HEAD_BOB_RECOVERY_SPEED = 8.0f;
+    private static final float MAX_STAMINA = 100f;
+    private static final float STAMINA_DRAIN_RATE = 22f;
+    private static final float STAMINA_REGEN_RATE = 14f;
+    private static final float STAMINA_REGEN_THRESHOLD = 25f;
 
     // ==================== Fields ====================
 
@@ -76,10 +80,13 @@ public class PlayerController {
     private float crouchLerpT = 0.0f; // 0 = standing, 1 = crouched
     private float headBobPhase = 0.0f;
     private float headBobOffset = 0.0f;
+    private float stamina = MAX_STAMINA;
+    private boolean staminaDepleted = false;
 
     // Ground detection
     private boolean isGrounded = true;
     private final Array<BoundingBox> worldColliders = new Array<>();
+    private int collisionCount;
 
     // ==================== Constructor ====================
 
@@ -91,6 +98,10 @@ public class PlayerController {
     public PlayerController(PerspectiveCamera camera) {
         this.camera = camera;
         this.position.set(camera.position);
+    }
+
+    PlayerController() {
+        this.camera = null;
     }
 
     // ==================== Main Update ====================
@@ -105,6 +116,7 @@ public class PlayerController {
         // Read input and update state
         updateMouseLook(delta);
         updateMovementState();
+        updateStamina(delta);
         handleJumpInput();
         updateCrouchHeight(delta);
 
@@ -159,7 +171,7 @@ public class PlayerController {
             currentState = MovementState.CROUCH;
         } else if (slowWalkInput && walkInput) {
             currentState = MovementState.SLOW_WALK;
-        } else if (runInput && walkInput) {
+        } else if (runInput && walkInput && !staminaDepleted) {
             currentState = MovementState.RUN;
         } else if (walkInput) {
             currentState = MovementState.WALK;
@@ -263,6 +275,7 @@ public class PlayerController {
      * Direction is computed from camera forward/right, projected to XZ plane.
      */
     private void integrateMovement(float delta) {
+        boolean collidedThisTick = false;
         Vector3 moveDir = computeMovementDirection();
 
         if (moveDir.len2() > 0.001f) {
@@ -283,10 +296,15 @@ public class PlayerController {
         if (isCollidingAt(nextX, position.y, position.z)) {
             nextX = position.x;
             velocity.x = 0f;
+            collidedThisTick = true;
         }
         if (isCollidingAt(nextX, position.y, nextZ)) {
             nextZ = position.z;
             velocity.z = 0f;
+            collidedThisTick = true;
+        }
+        if (collidedThisTick) {
+            collisionCount++;
         }
 
         // Apply resolved movement.
@@ -316,6 +334,20 @@ public class PlayerController {
         headBobPhase = 0.0f;
         float recoveryAlpha = Math.min(1.0f, delta * HEAD_BOB_RECOVERY_SPEED);
         headBobOffset = MathUtils.lerp(headBobOffset, 0.0f, recoveryAlpha);
+    }
+
+    private void updateStamina(float delta) {
+        if (currentState == MovementState.RUN && isGrounded) {
+            stamina = Math.max(0f, stamina - STAMINA_DRAIN_RATE * delta);
+            if (stamina <= 0f) {
+                staminaDepleted = true;
+            }
+        } else {
+            stamina = Math.min(MAX_STAMINA, stamina + STAMINA_REGEN_RATE * delta);
+            if (stamina >= STAMINA_REGEN_THRESHOLD) {
+                staminaDepleted = false;
+            }
+        }
     }
 
     private boolean isHeadBobMovementState(MovementState movementState) {
@@ -501,6 +533,14 @@ public class PlayerController {
         return (float) Math.sqrt((velocity.x * velocity.x) + (velocity.z * velocity.z));
     }
 
+    public float getStamina() {
+        return stamina;
+    }
+
+    public float getMaxStamina() {
+        return MAX_STAMINA;
+    }
+
     /**
      * @return Yaw angle in degrees
      */
@@ -527,6 +567,15 @@ public class PlayerController {
      */
     public boolean isCrouching() {
         return crouchLerpT > 0.5f;
+    }
+
+    /**
+     * Returns movement-tick collision count since last read and resets it.
+     */
+    public int getAndResetCollisionCount() {
+        int count = collisionCount;
+        collisionCount = 0;
+        return count;
     }
 
     /**

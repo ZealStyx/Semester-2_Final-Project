@@ -16,6 +16,7 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer.ShapeType;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.Label;
@@ -46,8 +47,13 @@ import io.github.superteam.resonance.sound.SoundPulseVisualizer;
 import io.github.superteam.resonance.sound.SoundPropagationOrchestrator;
 import io.github.superteam.resonance.sound.SpatialCueController;
 import io.github.superteam.resonance.sound.WallType;
+import io.github.superteam.resonance.sound.viz.AcousticBounce3DVisualizer;
+import io.github.superteam.resonance.sound.viz.AcousticBounceConfig;
+import io.github.superteam.resonance.sound.viz.AcousticBounceConfigStore;
+import io.github.superteam.resonance.sound.viz.MicrophoneInputAdapter;
 import java.util.ArrayList;
 import java.util.List;
+import com.badlogic.gdx.utils.Array;
 
 public class SoundTestScreen extends ScreenAdapter {
     private static final float CAMERA_HEIGHT = 10f;
@@ -66,7 +72,9 @@ public class SoundTestScreen extends ScreenAdapter {
     private final SonarRenderer sonarRenderer;
     private final SpatialCueController spatialCueController;
     private final SoundPropagationOrchestrator soundPropagationOrchestrator;
-    private final RealtimeMicSystem realtimeMicSystem;
+    private final MicrophoneInputAdapter microphoneInputAdapter;
+    private final AcousticBounce3DVisualizer acousticBounce3DVisualizer;
+    private final AcousticBounceConfig acousticBounceConfig;
     private final List<RoomWalls> roomWalls = new ArrayList<>();
 
     private final Vector3 origin = new Vector3(0f, 0.05f, 0f);
@@ -117,7 +125,9 @@ public class SoundTestScreen extends ScreenAdapter {
         soundPropagationOrchestrator.setListenerRoomAcousticProfile(
             RoomAcousticProfile.fromRoomGeometry(19f, 8f, 2f, AcousticMaterial.CONCRETE)
         );
-        realtimeMicSystem = new RealtimeMicSystem(0.14f);
+        acousticBounceConfig = AcousticBounceConfigStore.loadOrDefault("config/acoustic_bounce_3d_config.json");
+        microphoneInputAdapter = new MicrophoneInputAdapter(0.14f, acousticBounceConfig.microphone.sensitivityThreshold);
+        acousticBounce3DVisualizer = new AcousticBounce3DVisualizer(acousticGraphEngine, buildAcousticVizColliders(), acousticBounceConfig);
 
         stage.getViewport().update(initialWidth, initialHeight, true);
         camera.viewportWidth = initialWidth;
@@ -140,13 +150,14 @@ public class SoundTestScreen extends ScreenAdapter {
         soundPropagationOrchestrator.update(delta);
         soundPulseVisualizer.update(delta);
         RealtimeMicSystem.Frame micFrame = RealtimeMicSystem.Frame.silent();
-        if (micEnabled && realtimeMicSystem.isActive()) {
-            micFrame = realtimeMicSystem.update(delta);
-            if (micFrame.shouldEmitSignal()) {
+        if (micEnabled && microphoneInputAdapter.isActive()) {
+            micFrame = microphoneInputAdapter.update(delta);
+            if (microphoneInputAdapter.shouldEmitMicEvent()) {
                 emitMicSignal(micFrame);
             }
         }
         updateMicLevelMeter(micFrame);
+        acousticBounce3DVisualizer.update(delta);
 
         Gdx.gl.glViewport(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         Gdx.gl.glClearColor(0.07f, 0.08f, 0.1f, 1f);
@@ -165,6 +176,7 @@ public class SoundTestScreen extends ScreenAdapter {
         drawOriginMarker();
         drawReflectionOverlay();
         drawPulseOverlay();
+        acousticBounce3DVisualizer.render(camera);
 
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
         stage.act(delta);
@@ -185,7 +197,8 @@ public class SoundTestScreen extends ScreenAdapter {
 
     @Override
     public void dispose() {
-        realtimeMicSystem.stop();
+        microphoneInputAdapter.stop();
+        acousticBounce3DVisualizer.dispose();
         spatialCueController.dispose();
         stage.dispose();
         skin.dispose();
@@ -318,6 +331,21 @@ public class SoundTestScreen extends ScreenAdapter {
             }
         }
         shapes.end();
+    }
+
+    private Array<BoundingBox> buildAcousticVizColliders() {
+        Array<BoundingBox> colliders = new Array<>();
+        for (RoomWalls roomWall : roomWalls) {
+            float minX = roomWall.centerX - roomWall.halfWidth;
+            float maxX = roomWall.centerX + roomWall.halfWidth;
+            float minZ = roomWall.centerZ - roomWall.halfDepth;
+            float maxZ = roomWall.centerZ + roomWall.halfDepth;
+            colliders.add(new BoundingBox(new Vector3(minX, 0f, minZ), new Vector3(maxX, roomWall.height, minZ + 0.05f)));
+            colliders.add(new BoundingBox(new Vector3(minX, 0f, maxZ - 0.05f), new Vector3(maxX, roomWall.height, maxZ)));
+            colliders.add(new BoundingBox(new Vector3(minX, 0f, minZ), new Vector3(minX + 0.05f, roomWall.height, maxZ)));
+            colliders.add(new BoundingBox(new Vector3(maxX - 0.05f, 0f, minZ), new Vector3(maxX, roomWall.height, maxZ)));
+        }
+        return colliders;
     }
 
     private void buildUi() {
@@ -497,6 +525,25 @@ public class SoundTestScreen extends ScreenAdapter {
         float cameraStep = CAMERA_MOVE_SPEED * clampedDelta;
         float sourceStep = SOURCE_MOVE_SPEED * clampedDelta;
 
+        if (Gdx.input.isKeyJustPressed(Input.Keys.V)) {
+            acousticBounce3DVisualizer.cycleMode();
+            propagationStatusLabel.setText(
+                "Acoustic Viz Mode=" + acousticBounce3DVisualizer.modeLabel()
+                    + " | edges=" + acousticBounce3DVisualizer.activeEdgeCount()
+                    + " | rays=" + acousticBounce3DVisualizer.activeRayCount()
+            );
+        }
+
+        boolean reloadPressed =
+            Gdx.input.isKeyJustPressed(Input.Keys.R)
+                && (Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT) || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT));
+        if (reloadPressed) {
+            AcousticBounceConfig reloaded = AcousticBounceConfigStore.loadOrDefault("config/acoustic_bounce_3d_config.json");
+            acousticBounce3DVisualizer.reloadConfig(reloaded);
+            microphoneInputAdapter.setSensitivityThreshold(reloaded.microphone.sensitivityThreshold);
+            propagationStatusLabel.setText("Reloaded acoustic_bounce_3d_config.json");
+        }
+
         if (Gdx.input.isKeyPressed(Input.Keys.W)) {
             cameraPlanarPosition.z -= cameraStep;
         }
@@ -547,6 +594,7 @@ public class SoundTestScreen extends ScreenAdapter {
         String nearestNodeId = findNearestNodeId(origin);
         SoundEventData soundEventData = SoundEventData.atNode(soundEvent, nearestNodeId, origin, elapsedSeconds);
         PropagationResult propagationResult = soundPropagationOrchestrator.emitSoundEvent(soundEventData, elapsedSeconds);
+        acousticBounce3DVisualizer.onSoundEvent(soundEventData, propagationResult);
 
         if (propagationResult != null) {
             soundPulseVisualizer.activate(origin);
@@ -583,15 +631,15 @@ public class SoundTestScreen extends ScreenAdapter {
     private void toggleMicInput() {
         if (micEnabled) {
             micEnabled = false;
-            realtimeMicSystem.stop();
+            microphoneInputAdapter.stop();
             micStatusLabel.setText("Mic: OFF");
             resetMicLevelMeter();
             return;
         }
 
         try {
-            realtimeMicSystem.start(16000, 1024);
-            micEnabled = realtimeMicSystem.isActive();
+            microphoneInputAdapter.start(16000, 1024);
+            micEnabled = microphoneInputAdapter.isActive();
             micStatusLabel.setText(micEnabled ? "Mic: ON" : "Mic: unavailable");
             if (!micEnabled) {
                 resetMicLevelMeter();
@@ -610,13 +658,14 @@ public class SoundTestScreen extends ScreenAdapter {
 
         String nearestNodeId = findNearestNodeId(origin);
         SoundEventData soundEventData = new SoundEventData(
-            SoundEvent.NOISE_DECOY,
+            SoundEvent.MIC_INPUT,
             nearestNodeId,
             origin,
             baseIntensity,
             elapsedSeconds
         );
         PropagationResult propagationResult = soundPropagationOrchestrator.emitSoundEvent(soundEventData, elapsedSeconds);
+        acousticBounce3DVisualizer.onSoundEvent(soundEventData, propagationResult);
         if (propagationResult != null) {
             soundPulseVisualizer.activate(origin, normalizedLoudness);
             propagationStatusLabel.setText(
@@ -629,6 +678,8 @@ public class SoundTestScreen extends ScreenAdapter {
                     + nearestNodeId
                     + " | Revealed: "
                     + propagationResult.revealNodeIds().size()
+                    + " | Viz="
+                    + acousticBounce3DVisualizer.modeLabel()
             );
         }
     }

@@ -14,6 +14,7 @@ import io.github.superteam.resonance.sound.SoundBalancingConfig;
 import io.github.superteam.resonance.sound.SoundPropagationOrchestrator;
 import io.github.superteam.resonance.sound.AcousticGraphEngine;
 import io.github.superteam.resonance.sound.SpatialCueController;
+import io.github.superteam.resonance.sound.TestAcousticGraphFactory;
 import org.junit.Test;
 
 public class ImpactListenerTest {
@@ -39,7 +40,7 @@ public class ImpactListenerTest {
     }
 
     private ImpactListener createImpactListener() {
-        AcousticGraphEngine acousticGraphEngine = new AcousticGraphEngine().buildTestGraph();
+        AcousticGraphEngine acousticGraphEngine = TestAcousticGraphFactory.create();
         SoundPropagationOrchestrator orchestrator = new SoundPropagationOrchestrator(
             acousticGraphEngine,
             new DijkstraPathfinder(),

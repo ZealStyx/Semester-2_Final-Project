@@ -7,7 +7,7 @@ import org.junit.Test;
 public class AcousticGraphEngineTest {
     @Test
     public void buildTestGraphCreatesExpectedNodesAndEdges() {
-        AcousticGraphEngine engine = new AcousticGraphEngine().buildTestGraph();
+        AcousticGraphEngine engine = TestAcousticGraphFactory.create();
 
         Assert.assertEquals(9, engine.getNodes().size());
         Assert.assertEquals(16, engine.getEdges().size());

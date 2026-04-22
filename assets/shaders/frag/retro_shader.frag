@@ -73,10 +73,8 @@ void main() {
         : 1.0;
     vec3 color = mix(u_fogColor, litColor, fogFactor);
 
-    float blindRange = (u_blindFogEnd - u_blindFogStart > 0.001)
-        ? clamp((u_blindFogEnd - dist) / (u_blindFogEnd - u_blindFogStart), 0.0, 1.0)
-        : 1.0;
-    float blindFactor = clamp((1.0 - blindRange) * u_blindFogStrength, 0.0, 1.0);
+    float blindEdge = smoothstep(u_blindFogStart, u_blindFogEnd, dist);
+    float blindFactor = clamp(blindEdge * u_blindFogStrength, 0.0, 1.0);
     color = mix(color, u_blindFogColor, blindFactor);
 
     color = applyCrtEffect(gl_FragCoord.xy, color);

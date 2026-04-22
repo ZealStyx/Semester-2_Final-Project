@@ -6,7 +6,7 @@ import org.junit.Test;
 public class DijkstraPathfinderTest {
     @Test
     public void onSoundEventComputesShortestDistancesAndIntensityDecay() {
-        AcousticGraphEngine graphEngine = new AcousticGraphEngine().buildTestGraph();
+        AcousticGraphEngine graphEngine = TestAcousticGraphFactory.create();
         DijkstraPathfinder pathfinder = new DijkstraPathfinder();
 
         PropagationResult propagationResult = pathfinder.onSoundEvent(graphEngine, "center", 1.0f, 0.35f, 0.25f);
@@ -24,7 +24,7 @@ public class DijkstraPathfinderTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void onSoundEventRejectsUnknownSourceNode() {
-        AcousticGraphEngine graphEngine = new AcousticGraphEngine().buildTestGraph();
+        AcousticGraphEngine graphEngine = TestAcousticGraphFactory.create();
         new DijkstraPathfinder().onSoundEvent(graphEngine, "missing", 1.0f, 0.35f, 0.2f);
     }
 }
