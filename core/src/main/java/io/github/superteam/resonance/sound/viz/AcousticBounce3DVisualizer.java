@@ -65,7 +65,7 @@ public final class AcousticBounce3DVisualizer {
                 && (mode == VisualizationMode.GRAPH_ONLY || mode == VisualizationMode.BOTH)
                 && config.graphLayer.renderEdges
         ) {
-            graphRenderLayer.activate(pendingPropagationResult);
+            graphRenderLayer.activate(pendingPropagationResult, strength);
         }
 
         if ((mode == VisualizationMode.RAYS_ONLY || mode == VisualizationMode.BOTH) && config.geometricLayer.renderRays) {

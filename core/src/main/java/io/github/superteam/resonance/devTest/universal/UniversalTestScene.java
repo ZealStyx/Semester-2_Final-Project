@@ -187,6 +187,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final Vector3 tmpDropPosition = new Vector3();
     private final Vector3 tmpCarryPoint = new Vector3();
     private final Vector3 tmpImpulsePoint = new Vector3();
+    private final Vector3 tmpImpactVelocity = new Vector3();
     private final Vector3 tmpInertia = new Vector3();
     private final Vector3 tmpProjected = new Vector3();
     private final Vector3 tmpBaseCameraUp = new Vector3();
@@ -1773,6 +1774,19 @@ public final class UniversalTestScene extends ScreenAdapter {
                 }
             }
 
+            if (!hasImpact) {
+                maxImpulse = estimateImpactImpulse(carriableItem);
+                hasImpact = maxImpulse > 0f;
+                if (hasImpact) {
+                    tmpImpactVelocity.set(carriableItem.rigidBody().getLinearVelocity());
+                    if (tmpImpactVelocity.len2() > 0f) {
+                        tmpImpulsePoint.set(carriableItem.worldPosition()).add(tmpImpactVelocity.nor().scl(0.05f));
+                    } else {
+                        tmpImpulsePoint.set(carriableItem.worldPosition());
+                    }
+                }
+            }
+
             if (hasImpact) {
                 PropagationResult propagationResult = impactListener.onCarriableImpact(
                     carriableItem,
@@ -1785,6 +1799,20 @@ public final class UniversalTestScene extends ScreenAdapter {
                 }
             }
         }
+    }
+
+    private float estimateImpactImpulse(CarriableItem carriableItem) {
+        if (carriableItem == null || carriableItem.rigidBody() == null) {
+            return 0f;
+        }
+
+        tmpImpactVelocity.set(carriableItem.rigidBody().getLinearVelocity());
+        float speed = tmpImpactVelocity.len();
+        if (speed <= 0.1f) {
+            return 0f;
+        }
+
+        return Math.min(150f, speed * carriableItem.definition().mass() * 12f);
     }
 
     private CarriableItem resolveCarriableItem(btCollisionObject body0, btCollisionObject body1) {

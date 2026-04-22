@@ -109,6 +109,7 @@ public class PlayerTestScreen extends ScreenAdapter {
     private final Vector3 tmpDropPosition = new Vector3();
     private final Vector3 tmpCarryPoint = new Vector3();
     private final Vector3 tmpImpulsePoint = new Vector3();
+    private final Vector3 tmpImpactVelocity = new Vector3();
     private final Vector3 tmpInertia = new Vector3();
 
     private final Matrix4 playerViewModelTransform = new Matrix4();
@@ -517,6 +518,8 @@ public class PlayerTestScreen extends ScreenAdapter {
             }
 
             int contactCount = manifold.getNumContacts();
+            float maxImpulse = 0f;
+            boolean hasImpact = false;
             for (int contactIndex = 0; contactIndex < contactCount; contactIndex++) {
                 btManifoldPoint contactPoint = manifold.getContactPoint(contactIndex);
                 float appliedImpulse = contactPoint.getAppliedImpulse();
@@ -524,11 +527,31 @@ public class PlayerTestScreen extends ScreenAdapter {
                     continue;
                 }
 
-                contactPoint.getPositionWorldOnA(tmpImpulsePoint);
+                if (appliedImpulse > maxImpulse) {
+                    maxImpulse = appliedImpulse;
+                    contactPoint.getPositionWorldOnA(tmpImpulsePoint);
+                    hasImpact = true;
+                }
+            }
+
+            if (!hasImpact) {
+                maxImpulse = estimateImpactImpulse(carriableItem);
+                hasImpact = maxImpulse > 0f;
+                if (hasImpact) {
+                    tmpImpactVelocity.set(carriableItem.rigidBody().getLinearVelocity());
+                    if (tmpImpactVelocity.len2() > 0f) {
+                        tmpImpulsePoint.set(carriableItem.worldPosition()).add(tmpImpactVelocity.nor().scl(0.05f));
+                    } else {
+                        tmpImpulsePoint.set(carriableItem.worldPosition());
+                    }
+                }
+            }
+
+            if (hasImpact) {
                 PropagationResult propagationResult = impactListener.onCarriableImpact(
                     carriableItem,
                     tmpImpulsePoint,
-                    appliedImpulse,
+                    maxImpulse,
                     elapsedSeconds
                 );
                 if (propagationResult != null) {
@@ -536,6 +559,20 @@ public class PlayerTestScreen extends ScreenAdapter {
                 }
             }
         }
+    }
+
+    private float estimateImpactImpulse(CarriableItem carriableItem) {
+        if (carriableItem == null || carriableItem.rigidBody() == null) {
+            return 0f;
+        }
+
+        tmpImpactVelocity.set(carriableItem.rigidBody().getLinearVelocity());
+        float speed = tmpImpactVelocity.len();
+        if (speed <= 0.1f) {
+            return 0f;
+        }
+
+        return Math.min(150f, speed * carriableItem.definition().mass() * 12f);
     }
 
     private CarriableItem resolveCarriableItem(btCollisionObject body0, btCollisionObject body1) {

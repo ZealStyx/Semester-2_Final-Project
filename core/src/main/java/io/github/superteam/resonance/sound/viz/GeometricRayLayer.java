@@ -48,12 +48,12 @@ public final class GeometricRayLayer {
                     continue;
                 }
                 float intensity = MathUtils.clamp(strength / ((travelDistance * travelDistance * 0.08f) + 1f), 0.05f, 1f);
-                activeRays.add(new RayTraceSample(rayStart, nearestHit, intensity, config.fadeOutSeconds));
+                activeRays.add(new RayTraceSample(rayStart, nearestHit, intensity, strength, config.fadeOutSeconds));
             } else {
                 if (resolveBounceDepth(maxDistance) > config.maxBounceDepth) {
                     continue;
                 }
-                activeRays.add(new RayTraceSample(rayStart, rayEnd, MathUtils.clamp(strength, 0.05f, 1f), config.fadeOutSeconds));
+                activeRays.add(new RayTraceSample(rayStart, rayEnd, MathUtils.clamp(strength, 0.05f, 1f), strength, config.fadeOutSeconds));
             }
         }
     }
@@ -123,11 +123,21 @@ public final class GeometricRayLayer {
             float alpha = MathUtils.clamp(sample.remainingSeconds / Math.max(0.0001f, sample.initialSeconds), 0f, 1f);
             Color markerColor = config.bounceMarkerColor;
 
-            shapes.setColor(1f, 0.94f, 0.35f, alpha * sample.intensity);
+            float strengthBoost = 0.25f + (sample.sourceIntensity * 0.75f);
+            float lineRed = MathUtils.clamp(0.35f + (sample.intensity * 0.65f), 0f, 1f);
+            float lineGreen = MathUtils.clamp(0.30f + (sample.intensity * 0.55f), 0f, 1f);
+            float lineBlue = MathUtils.clamp(0.20f + (sample.sourceIntensity * 0.80f), 0f, 1f);
+
+            shapes.setColor(lineRed, lineGreen, lineBlue, alpha * sample.intensity * strengthBoost);
             shapes.line(sample.start.x, sample.start.y, sample.start.z, sample.end.x, sample.end.y, sample.end.z);
 
             float cross = config.bounceMarkerScale;
-            shapes.setColor(markerColor.r, markerColor.g, markerColor.b, markerColor.a * alpha * sample.intensity);
+            shapes.setColor(
+                MathUtils.clamp(markerColor.r * (0.6f + (sample.sourceIntensity * 0.4f)), 0f, 1f),
+                MathUtils.clamp(markerColor.g * (0.6f + (sample.sourceIntensity * 0.4f)), 0f, 1f),
+                MathUtils.clamp(markerColor.b * (0.6f + (sample.sourceIntensity * 0.4f)), 0f, 1f),
+                markerColor.a * alpha * sample.intensity * strengthBoost
+            );
             shapes.line(sample.end.x - cross, sample.end.y, sample.end.z, sample.end.x + cross, sample.end.y, sample.end.z);
             shapes.line(sample.end.x, sample.end.y - cross, sample.end.z, sample.end.x, sample.end.y + cross, sample.end.z);
             shapes.line(sample.end.x, sample.end.y, sample.end.z - cross, sample.end.x, sample.end.y, sample.end.z + cross);
@@ -143,13 +153,15 @@ public final class GeometricRayLayer {
         private final Vector3 start;
         private final Vector3 end;
         private final float intensity;
+        private final float sourceIntensity;
         private final float initialSeconds;
         private float remainingSeconds;
 
-        private RayTraceSample(Vector3 start, Vector3 end, float intensity, float lifetimeSeconds) {
+        private RayTraceSample(Vector3 start, Vector3 end, float intensity, float sourceIntensity, float lifetimeSeconds) {
             this.start = start;
             this.end = end;
             this.intensity = intensity;
+            this.sourceIntensity = sourceIntensity;
             this.initialSeconds = Math.max(0.01f, lifetimeSeconds);
             this.remainingSeconds = this.initialSeconds;
         }
