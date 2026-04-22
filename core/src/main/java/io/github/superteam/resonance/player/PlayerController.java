@@ -33,12 +33,14 @@ public class PlayerController {
     private static final float EYE_HEIGHT_STANDING = 1.6f;
     private static final float EYE_HEIGHT_CROUCH = 0.75f;
     private static final float CROUCH_LERP_SPEED = 4.0f;
+    private static final float CEILING_CHECK_MARGIN = 0.05f;
 
     // Collision capsule dimensions
     private static final float CAPSULE_RADIUS = 0.3f;
 
     // Ceiling detection parameters
-    private static final float CEILING_CHECK_DISTANCE = 0.5f;
+    private static final float JUMP_COOLDOWN_SECONDS = 0.26f;
+    private static final float MIN_GROUNDED_TIME_BEFORE_JUMP_SECONDS = 0.12f;
 
     // Head bob tuning
     private static final float WALK_BOB_FREQUENCY = 7.0f;
@@ -85,6 +87,9 @@ public class PlayerController {
 
     // Ground detection
     private boolean isGrounded = true;
+    private boolean jumpTriggeredThisFrame;
+    private float jumpCooldownRemainingSeconds;
+    private float groundedTimeSeconds;
     private final Array<BoundingBox> worldColliders = new Array<>();
     private int collisionCount;
 
@@ -117,6 +122,9 @@ public class PlayerController {
         updateMouseLook(delta);
         updateMovementState();
         updateStamina(delta);
+        jumpTriggeredThisFrame = false;
+        jumpCooldownRemainingSeconds = Math.max(0f, jumpCooldownRemainingSeconds - delta);
+        groundedTimeSeconds = isGrounded ? groundedTimeSeconds + delta : 0f;
         handleJumpInput();
         updateCrouchHeight(delta);
 
@@ -190,7 +198,7 @@ public class PlayerController {
      * Apply upward velocity impulse when jump is pressed while grounded.
      */
     private void handleJumpInput() {
-        if (!isGrounded) {
+        if (!isGrounded || jumpCooldownRemainingSeconds > 0f || groundedTimeSeconds < MIN_GROUNDED_TIME_BEFORE_JUMP_SECONDS) {
             return;
         }
 
@@ -200,6 +208,8 @@ public class PlayerController {
 
         velocity.y = JUMP_FORCE;
         isGrounded = false;
+        jumpTriggeredThisFrame = true;
+        jumpCooldownRemainingSeconds = JUMP_COOLDOWN_SECONDS;
         headBobPhase = 0.0f;
     }
 
@@ -232,31 +242,14 @@ public class PlayerController {
      * @return True if ceiling/obstruction is detected
      */
     private boolean isCeilingObstructed() {
-        // Position of head when standing
-        float headY = position.y + EYE_HEIGHT_STANDING;
-        
-        // Check space above head (from current head height to ceiling check distance)
-        // Keeping this reference value explicit improves readability for future geometry checks.
-        float standCheckTopY = headY + CEILING_CHECK_DISTANCE;
-        
-        // Simple approach: if any part of the scene would collide with standing capsule, 
-        // we can't stand. For now, check if position + standing height > local ceiling.
-        // Actual ceiling detection would need scene geometry access.
-        
-        // Heuristic: assume flat roof at specific height, or check against preknown obstacles
-        // For now, we use a simple "if standing eye height would exceed a certain Y, block"
-        // This is placeholder; real implementation needs collision geometry.
-        
-        // Example: block if standing would put eye height above Y=1.2 in crouch alcove (Z > 7.5)
-        if (position.z > 7.5f && position.z < 9.0f && 
-            position.x > 1.0f && position.x < 3.0f) {
-            // Inside crouch alcove; check if standing eye height exceeds ceiling
-            if (standCheckTopY - CEILING_CHECK_DISTANCE + 0.1f > 1.2f) {
-                return true; // Ceiling detected
-            }
+        float currentEyeHeight = getEyeHeight();
+        float standingOffset = EYE_HEIGHT_STANDING - currentEyeHeight + CEILING_CHECK_MARGIN;
+        if (standingOffset <= 0f) {
+            return false;
         }
-        
-        return false;
+
+        float testY = position.y + standingOffset;
+        return isCollidingAt(position.x, testY, position.z);
     }
 
     // ==================== Physics Integration ====================
@@ -560,6 +553,12 @@ public class PlayerController {
      */
     public boolean isGrounded() {
         return isGrounded;
+    }
+
+    public boolean consumeJumpTriggered() {
+        boolean triggered = jumpTriggeredThisFrame;
+        jumpTriggeredThisFrame = false;
+        return triggered;
     }
 
     /**

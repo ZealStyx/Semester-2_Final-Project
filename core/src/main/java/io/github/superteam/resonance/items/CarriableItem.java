@@ -9,11 +9,17 @@ import java.util.Objects;
  */
 public final class CarriableItem {
 
+    public enum ItemState {
+        WORLD,
+        CARRIED,
+        BROKEN
+    }
+
     private final ItemDefinition definition;
     private final Vector3 worldPosition = new Vector3();
 
     private btRigidBody rigidBody;
-    private boolean broken;
+    private ItemState state = ItemState.WORLD;
 
     public CarriableItem(ItemDefinition definition, Vector3 initialWorldPosition) {
         this.definition = Objects.requireNonNull(definition, "definition must not be null");
@@ -44,10 +50,18 @@ public final class CarriableItem {
     }
 
     public boolean isBroken() {
-        return broken;
+        return state == ItemState.BROKEN;
     }
 
     public void markBroken() {
-        broken = true;
+        state = ItemState.BROKEN;
+    }
+
+    public ItemState state() {
+        return state;
+    }
+
+    public void setState(ItemState state) {
+        this.state = Objects.requireNonNull(state, "state must not be null");
     }
 }

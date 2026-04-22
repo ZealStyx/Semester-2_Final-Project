@@ -1,6 +1,7 @@
 {
-  "baseline_visibility_meters": 0.8,
-  "baseline_fade_edge_softness": 0.5,
+  "baseline_visibility_meters": 3.5,
+  "baseline_fade_edge_softness": 0.15,
+  "fog_zone_width_fraction": 0.15,
   "fog_strength": 0.95,
   "visibility_clamp_min_meters": 0.3,
   "visibility_clamp_max_meters": 20.0,
@@ -15,10 +16,10 @@
     "duration_seconds": 10.0
   },
   "sonar_reveal": {
-    "enabled": true,
+    "enabled": false,
     "clap_shout_radius_meters": 18.0,
     "duration_seconds": 0.7,
     "triggers_acoustic_visualization": true
   },
-  "blind_fog_color": [0.0, 0.0, 0.0, 1.0]
+  "blind_fog_color": [0.04, 0.04, 0.08, 1.0]
 }

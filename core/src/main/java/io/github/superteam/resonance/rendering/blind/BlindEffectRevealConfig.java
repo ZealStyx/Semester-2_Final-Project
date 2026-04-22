@@ -9,6 +9,7 @@ import com.badlogic.gdx.math.MathUtils;
 public final class BlindEffectRevealConfig {
     public float baselineVisibilityMeters = 1.8f;
     public float baselineFadeEdgeSoftness = 0.3f;
+    public float fogZoneWidthFraction = 0.15f;
     public float fogStrength = 0.82f;
     public float visibilityClampMinMeters = 0.1f;
     public float visibilityClampMaxMeters = 10.0f;
@@ -21,6 +22,7 @@ public final class BlindEffectRevealConfig {
     public void validate() {
         baselineVisibilityMeters = MathUtils.clamp(baselineVisibilityMeters, 0.1f, 10f);
         baselineFadeEdgeSoftness = MathUtils.clamp(baselineFadeEdgeSoftness, 0.05f, 2f);
+        fogZoneWidthFraction = MathUtils.clamp(fogZoneWidthFraction, 0.05f, 0.5f);
         fogStrength = MathUtils.clamp(fogStrength, 0f, 1f);
         visibilityClampMinMeters = MathUtils.clamp(visibilityClampMinMeters, 0.05f, 4f);
         visibilityClampMaxMeters = MathUtils.clamp(visibilityClampMaxMeters, visibilityClampMinMeters + 0.05f, 15f);

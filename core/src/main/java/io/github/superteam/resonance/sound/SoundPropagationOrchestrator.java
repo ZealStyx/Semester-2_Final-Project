@@ -167,6 +167,10 @@ public final class SoundPropagationOrchestrator {
         sonarRenderer.update(deltaSeconds);
     }
 
+    public List<SonarRenderer.SonarRevealView> sonarSnapshot() {
+        return sonarRenderer.snapshot();
+    }
+
     private boolean isInCooldown(SoundEvent soundEvent, float nowSeconds) {
         float cooldownEnd = eventCooldownUntilSeconds.getOrDefault(soundEvent, 0f);
         return nowSeconds < cooldownEnd;

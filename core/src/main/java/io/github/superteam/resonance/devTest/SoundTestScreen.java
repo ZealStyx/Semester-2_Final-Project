@@ -597,7 +597,7 @@ public class SoundTestScreen extends ScreenAdapter {
         acousticBounce3DVisualizer.onSoundEvent(soundEventData, propagationResult);
 
         if (propagationResult != null) {
-            soundPulseVisualizer.activate(origin);
+            soundPulseVisualizer.activate(origin, soundEventData.baseIntensity());
             propagationStatusLabel.setText(
                 originReason
                     + " | Source node: "
@@ -653,7 +653,7 @@ public class SoundTestScreen extends ScreenAdapter {
 
     private void emitMicSignal(RealtimeMicSystem.Frame micFrame) {
         MicVolumeLevel micVolumeLevel = micFrame.sample().volumeLevel();
-        float normalizedLoudness = MathUtils.clamp(micFrame.sample().normalizedLevel() / 1.4f, 0f, 1f);
+        float normalizedLoudness = MathUtils.clamp(micFrame.sample().normalizedLevel(), 0f, 1f);
         float baseIntensity = MathUtils.lerp(0.30f, 1.15f, normalizedLoudness);
 
         String nearestNodeId = findNearestNodeId(origin);

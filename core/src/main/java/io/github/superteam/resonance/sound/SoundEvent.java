@@ -6,6 +6,7 @@ package io.github.superteam.resonance.sound;
 public enum SoundEvent {
     FOOTSTEP(0.35f, 0.15f, 0.55f, FrequencyBand.LOW, EventPriority.LOW),
     FOOTSTEP_RUN(0.55f, 0.10f, 0.70f, FrequencyBand.LOW, EventPriority.LOW),
+    JUMP(0.60f, 0.18f, 0.70f, FrequencyBand.LOW, EventPriority.LOW),
     FOOTSTEP_WATER(0.50f, 0.12f, 0.65f, FrequencyBand.HIGH, EventPriority.LOW),
     OBJECT_HIT(0.62f, 0.20f, 0.70f, FrequencyBand.HIGH, EventPriority.MEDIUM),
     OBJECT_DROP_OR_BREAK(0.65f, 0.45f, 0.85f, FrequencyBand.HIGH, EventPriority.MEDIUM),

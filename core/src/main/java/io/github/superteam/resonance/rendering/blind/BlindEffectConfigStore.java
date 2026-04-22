@@ -30,6 +30,7 @@ public final class BlindEffectConfigStore {
             JsonValue root = new JsonReader().parse(file);
             config.baselineVisibilityMeters = root.getFloat("baseline_visibility_meters", config.baselineVisibilityMeters);
             config.baselineFadeEdgeSoftness = root.getFloat("baseline_fade_edge_softness", config.baselineFadeEdgeSoftness);
+            config.fogZoneWidthFraction = root.getFloat("fog_zone_width_fraction", config.fogZoneWidthFraction);
             config.fogStrength = root.getFloat("fog_strength", config.fogStrength);
             config.visibilityClampMinMeters = root.getFloat("visibility_clamp_min_meters", config.visibilityClampMinMeters);
             config.visibilityClampMaxMeters = root.getFloat("visibility_clamp_max_meters", config.visibilityClampMaxMeters);

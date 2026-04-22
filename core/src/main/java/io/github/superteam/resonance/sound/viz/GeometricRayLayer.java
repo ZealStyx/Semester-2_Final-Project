@@ -44,12 +44,31 @@ public final class GeometricRayLayer {
             Vector3 nearestHit = findNearestHit(rayStart, direction, maxDistance);
             if (nearestHit != null) {
                 float travelDistance = rayStart.dst(nearestHit);
+                if (resolveBounceDepth(travelDistance) > config.maxBounceDepth) {
+                    continue;
+                }
                 float intensity = MathUtils.clamp(strength / ((travelDistance * travelDistance * 0.08f) + 1f), 0.05f, 1f);
                 activeRays.add(new RayTraceSample(rayStart, nearestHit, intensity, config.fadeOutSeconds));
             } else {
+                if (resolveBounceDepth(maxDistance) > config.maxBounceDepth) {
+                    continue;
+                }
                 activeRays.add(new RayTraceSample(rayStart, rayEnd, MathUtils.clamp(strength, 0.05f, 1f), config.fadeOutSeconds));
             }
         }
+    }
+
+    private int resolveBounceDepth(float travelDistance) {
+        if (travelDistance < 4f) {
+            return 0;
+        }
+        if (travelDistance < 9f) {
+            return 1;
+        }
+        if (travelDistance < 15f) {
+            return 2;
+        }
+        return 3;
     }
 
     private Vector3 findNearestHit(Vector3 rayStart, Vector3 direction, float maxDistance) {

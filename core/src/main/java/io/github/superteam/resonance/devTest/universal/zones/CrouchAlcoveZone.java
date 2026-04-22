@@ -1,9 +1,16 @@
 package io.github.superteam.resonance.devTest.universal.zones;
 
 import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.utils.Array;
 import io.github.superteam.resonance.devTest.universal.BaseShellZone;
+import io.github.superteam.resonance.devTest.universal.ColliderDescriptor;
 
 public final class CrouchAlcoveZone extends BaseShellZone {
+    private static final float CEILING_Y = 1.2f;
+    private static final float CEILING_WIDTH = 6.0f;
+    private static final float CEILING_HEIGHT = 0.2f;
+    private static final float CEILING_DEPTH = 6.0f;
+
     private float simulationTime;
 
     public CrouchAlcoveZone(Vector3 center) {
@@ -22,5 +29,13 @@ public final class CrouchAlcoveZone extends BaseShellZone {
         mutableState().put("crouchRequired", "true");
         mutableState().put("inventorySlots", "4");
         mutableState().put("carryLoadHint", String.format("%.1f", 1.0f + (float) Math.sin(simulationTime) * 0.5f));
+    }
+
+    @Override
+    public Array<ColliderDescriptor> getColliders() {
+        Vector3 center = getCenter();
+        Array<ColliderDescriptor> colliders = new Array<>();
+        colliders.add(new ColliderDescriptor(center.x, CEILING_Y, center.z, CEILING_WIDTH, CEILING_HEIGHT, CEILING_DEPTH));
+        return colliders;
     }
 }

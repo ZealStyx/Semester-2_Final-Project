@@ -5,6 +5,7 @@ package io.github.superteam.resonance.sound;
  */
 public enum EdgeType {
     PATH,
+    TRANSMISSION,
     WALL,
     VENT,
     DOOR_OPEN,

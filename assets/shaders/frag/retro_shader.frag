@@ -69,12 +69,15 @@ void main() {
     float dist = distance(u_cameraPos, v_worldPos);
 
     float fogFactor = (u_fogEnd - u_fogStart > 0.001)
-        ? clamp((u_fogEnd - dist) / (u_fogEnd - u_fogStart), 0.0, 1.0)
-        : 1.0;
-    vec3 color = mix(u_fogColor, litColor, fogFactor);
+        ? clamp((dist - u_fogStart) / (u_fogEnd - u_fogStart), 0.0, 1.0)
+        : 0.0;
+    vec3 color = mix(litColor, u_fogColor, fogFactor);
 
     float blindEdge = smoothstep(u_blindFogStart, u_blindFogEnd, dist);
     float blindFactor = clamp(blindEdge * u_blindFogStrength, 0.0, 1.0);
+    if (dist >= u_blindFogEnd) {
+        blindFactor = 1.0;
+    }
     color = mix(color, u_blindFogColor, blindFactor);
 
     color = applyCrtEffect(gl_FragCoord.xy, color);

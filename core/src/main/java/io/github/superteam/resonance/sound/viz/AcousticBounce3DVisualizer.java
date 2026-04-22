@@ -13,6 +13,8 @@ import io.github.superteam.resonance.sound.SoundEventData;
  * Orchestrates graph and geometric bounce visual layers.
  */
 public final class AcousticBounce3DVisualizer {
+    private static final int MAX_THROTTLED_UPDATE_STEPS = 2;
+
     private final ShapeRenderer shapeRenderer = new ShapeRenderer();
     private final GraphRenderLayer graphRenderLayer;
     private final GeometricRayLayer geometricRayLayer;
@@ -20,6 +22,9 @@ public final class AcousticBounce3DVisualizer {
     private AcousticBounceConfig config;
     private VisualizationMode mode = VisualizationMode.BOTH;
     private SoundEventData lastEventData;
+    private SoundEventData pendingSoundEventData;
+    private PropagationResult pendingPropagationResult;
+    private float updateAccumulatorSeconds;
 
     public AcousticBounce3DVisualizer(AcousticGraphEngine acousticGraphEngine, Array<BoundingBox> colliders, AcousticBounceConfig config) {
         this.config = config == null ? new AcousticBounceConfig() : config;
@@ -44,21 +49,47 @@ public final class AcousticBounce3DVisualizer {
         }
 
         lastEventData = soundEventData;
-        float strength = soundEventData.baseIntensity();
+        pendingSoundEventData = soundEventData;
+        pendingPropagationResult = propagationResult;
+    }
 
-        if ((mode == VisualizationMode.GRAPH_ONLY || mode == VisualizationMode.BOTH) && config.graphLayer.renderEdges) {
-            graphRenderLayer.activate(propagationResult);
+    private void flushPendingEvent() {
+        if (pendingSoundEventData == null) {
+            return;
+        }
+
+        float strength = pendingSoundEventData.baseIntensity();
+
+        if (
+            pendingPropagationResult != null
+                && (mode == VisualizationMode.GRAPH_ONLY || mode == VisualizationMode.BOTH)
+                && config.graphLayer.renderEdges
+        ) {
+            graphRenderLayer.activate(pendingPropagationResult);
         }
 
         if ((mode == VisualizationMode.RAYS_ONLY || mode == VisualizationMode.BOTH) && config.geometricLayer.renderRays) {
-            Vector3 sourcePosition = soundEventData.worldPosition();
+            Vector3 sourcePosition = pendingSoundEventData.worldPosition();
             geometricRayLayer.fireRays(sourcePosition, strength);
         }
+
+        pendingSoundEventData = null;
+        pendingPropagationResult = null;
     }
 
     public void update(float deltaSeconds) {
-        graphRenderLayer.update(deltaSeconds);
-        geometricRayLayer.update(deltaSeconds);
+        float clampedDelta = Math.max(0f, deltaSeconds);
+        updateAccumulatorSeconds += clampedDelta;
+
+        float updateStepSeconds = Math.max(1f / 240f, config.updateThrottleSeconds);
+        int steps = 0;
+        while (updateAccumulatorSeconds >= updateStepSeconds && steps < MAX_THROTTLED_UPDATE_STEPS) {
+            updateAccumulatorSeconds -= updateStepSeconds;
+            flushPendingEvent();
+            graphRenderLayer.update(updateStepSeconds);
+            geometricRayLayer.update(updateStepSeconds);
+            steps++;
+        }
     }
 
     public void render(PerspectiveCamera camera) {

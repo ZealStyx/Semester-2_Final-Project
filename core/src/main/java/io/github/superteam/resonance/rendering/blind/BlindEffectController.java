@@ -115,8 +115,9 @@ public final class BlindEffectController {
     }
 
     private void updateFogBounds() {
-        fogStartMeters = Math.max(0.05f, visibilityMeters);
-        fogEndMeters = fogStartMeters + Math.max(0.1f, visibilityMeters * (1.0f + config.baselineFadeEdgeSoftness));
+        fogEndMeters = Math.max(0.5f, visibilityMeters);
+        float fogZoneWidth = Math.max(0.1f, fogEndMeters * config.fogZoneWidthFraction);
+        fogStartMeters = Math.max(0.05f, fogEndMeters - fogZoneWidth);
     }
 
     private void rebuildDebugLines() {

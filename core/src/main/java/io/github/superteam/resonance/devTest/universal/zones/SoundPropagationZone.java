@@ -7,12 +7,13 @@ import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.ObjectMap;
 import io.github.superteam.resonance.devTest.universal.BaseShellZone;
 
-public final class SoundPropagationZone extends BaseShellZone {
+public final class SoundPropagationZone extends BaseShellZone implements Disposable {
     private final ShapeRenderer shapeRenderer = new ShapeRenderer();
-    private final ObjectMap<String, Vector3> nodePositions = new ObjectMap<>();
+    private ObjectMap<String, Vector3> nodePositions = new ObjectMap<>();
     private final Array<String> revealedIds = new Array<>();
     private final Vector3 tmpProjected = new Vector3();
     private final Matrix4 overlayProjection = new Matrix4();
@@ -24,13 +25,15 @@ public final class SoundPropagationZone extends BaseShellZone {
         super("Sound Propagation", center, 8.0f);
     }
 
-    public void setSoundData(ObjectMap<String, Vector3> sourceNodePositions, Array<String> sourceRevealedIds, float flashAlpha, Vector3 playerPosition) {
-        nodePositions.clear();
-        if (sourceNodePositions != null) {
-            for (ObjectMap.Entry<String, Vector3> entry : sourceNodePositions.entries()) {
-                nodePositions.put(entry.key, new Vector3(entry.value));
-            }
+    public void setNodePositions(ObjectMap<String, Vector3> sourceNodePositions) {
+        if (sourceNodePositions == null) {
+            nodePositions = new ObjectMap<>();
+            return;
         }
+        nodePositions = sourceNodePositions;
+    }
+
+    public void setSoundData(Array<String> sourceRevealedIds, float flashAlpha, Vector3 playerPosition) {
 
         revealedIds.clear();
         if (sourceRevealedIds != null) {
@@ -175,5 +178,10 @@ public final class SoundPropagationZone extends BaseShellZone {
                 prevZ = z;
             }
         }
+    }
+
+    @Override
+    public void dispose() {
+        shapeRenderer.dispose();
     }
 }

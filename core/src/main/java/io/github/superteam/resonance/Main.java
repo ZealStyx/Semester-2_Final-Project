@@ -1,6 +1,7 @@
 package io.github.superteam.resonance;
 
 import com.badlogic.gdx.Game;
+import com.badlogic.gdx.Screen;
 
 import io.github.superteam.resonance.devTest.ModelDebugScreen;
 import io.github.superteam.resonance.devTest.PlayerTestScreen;
@@ -21,5 +22,15 @@ public class Main extends Game {
         }
 
         setScreen(new PlayerTestScreen());
+    }
+
+    @Override
+    public void dispose() {
+        Screen current = getScreen();
+        if (current != null) {
+            current.hide();
+            current.dispose();
+            setScreen(null);
+        }
     }
 }

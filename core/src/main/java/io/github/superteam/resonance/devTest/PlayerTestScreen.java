@@ -18,6 +18,7 @@ import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.BoundingBox;
+import com.badlogic.gdx.Screen;
 import com.badlogic.gdx.physics.bullet.Bullet;
 import com.badlogic.gdx.physics.bullet.collision.btBoxShape;
 import com.badlogic.gdx.physics.bullet.collision.btBroadphaseInterface;
@@ -68,6 +69,7 @@ import io.github.superteam.resonance.rendering.blind.BlindEffectRevealConfig;
 import io.github.superteam.resonance.rendering.blind.BlindFogUniformUpdater;
 import io.github.superteam.resonance.sound.AcousticGraphEngine;
 import io.github.superteam.resonance.sound.DijkstraPathfinder;
+import io.github.superteam.resonance.sound.GraphPopulator;
 import io.github.superteam.resonance.sound.PropagationResult;
 import io.github.superteam.resonance.sound.SonarRenderer;
 import io.github.superteam.resonance.sound.SoundBalancingConfigStore;
@@ -76,7 +78,6 @@ import io.github.superteam.resonance.sound.SoundEventData;
 import io.github.superteam.resonance.sound.PhysicsNoiseEmitter;
 import io.github.superteam.resonance.sound.SoundPropagationOrchestrator;
 import io.github.superteam.resonance.sound.SpatialCueController;
-import io.github.superteam.resonance.sound.TestAcousticGraphFactory;
 
 /**
  * Player system test and demo screen.
@@ -199,9 +200,6 @@ public class PlayerTestScreen extends ScreenAdapter {
     private static final float FOV_LERP_SPEED = 6.5f;
 
     // Body-cam VHS controls
-    private static final float VHS_STRENGTH_STEP = 0.05f;
-    private static final float VHS_STRENGTH_MIN = 0.0f;
-    private static final float VHS_STRENGTH_MAX = 1.0f;
     private static final float BODCAM_TUNING_STEP = 0.02f;
     private static final float BODCAM_TUNING_STEP_COARSE = 0.10f;
 
@@ -294,7 +292,7 @@ public class PlayerTestScreen extends ScreenAdapter {
         playerInteractionSystem.setInteractionRange(INTERACTION_RANGE);
         playerInteractionSystem.setInteractionKeyCode(Input.Keys.R);
 
-        acousticGraphEngine = TestAcousticGraphFactory.create();
+        acousticGraphEngine = new GraphPopulator().populate(worldColliders);
         cacheGraphNodePositions();
 
         spatialCueController = new SpatialCueController();
@@ -309,8 +307,8 @@ public class PlayerTestScreen extends ScreenAdapter {
         impactListener = new ImpactListener(physicsNoiseEmitter, this::findNearestNodeId);
         soundPropagationOrchestrator.registerDirectorListener((soundEventData, propagationResult) -> {
             lastSoundIntensity = Math.max(lastSoundIntensity, soundEventData.baseIntensity());
-            boolean sonarTriggered = blindEffectController.onSoundEvent(soundEventData);
-            if (sonarTriggered) {
+            blindEffectController.onSoundEvent(soundEventData);
+            if (propagationResult != null) {
                 cacheRevealedNodesForFlash(propagationResult);
             }
         });
@@ -736,7 +734,9 @@ public class PlayerTestScreen extends ScreenAdapter {
         revealedFlashRemaining = Math.max(0.0f, revealedFlashRemaining - clampedDelta);
         inventoryFullMessageRemaining = Math.max(0.0f, inventoryFullMessageRemaining - clampedDelta);
 
-        handleRuntimeInput();
+        if (handleRuntimeInput()) {
+            return;
+        }
         updateGameplaySystems(clampedDelta);
         updateCameraFov(clampedDelta);
 
@@ -745,7 +745,7 @@ public class PlayerTestScreen extends ScreenAdapter {
         renderHudOverlays();
     }
 
-    private void handleRuntimeInput() {
+    private boolean handleRuntimeInput() {
         boolean ctrlPressed = Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT) || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT);
         if (Gdx.input.isKeyJustPressed(Input.Keys.G)) {
             if (ctrlPressed) {
@@ -776,8 +776,12 @@ public class PlayerTestScreen extends ScreenAdapter {
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.F10)) {
             if (Gdx.app.getApplicationListener() instanceof Game game) {
+                Screen previous = game.getScreen();
                 game.setScreen(new UniversalTestScene());
-                return;
+                if (previous != null && previous != game.getScreen()) {
+                    Gdx.app.postRunnable(previous::dispose);
+                }
+                return true;
             }
         }
 
@@ -805,6 +809,8 @@ public class PlayerTestScreen extends ScreenAdapter {
         } else if (decreasePressed) {
             adjustSelectedBodyCamParameter(-1.0f);
         }
+
+        return false;
     }
 
     private void adjustSelectedBodyCamParameter(float direction) {
@@ -935,7 +941,7 @@ public class PlayerTestScreen extends ScreenAdapter {
         }
 
         for (CarriableItem carriableItem : worldCarriableItems) {
-            if (carriableItem.isBroken()) {
+            if (carriableItem.state() != CarriableItem.ItemState.WORLD) {
                 continue;
             }
 
@@ -1338,7 +1344,7 @@ public class PlayerTestScreen extends ScreenAdapter {
         float nearestDistanceSquared = Float.POSITIVE_INFINITY;
 
         for (CarriableItem carriableItem : worldCarriableItems) {
-            if (carriableItem.isBroken()) {
+            if (carriableItem.state() != CarriableItem.ItemState.WORLD) {
                 continue;
             }
 
@@ -1446,6 +1452,7 @@ public class PlayerTestScreen extends ScreenAdapter {
     }
 
     private void removeWorldCarriableItem(CarriableItem carriableItem) {
+        carriableItem.setState(CarriableItem.ItemState.BROKEN);
         carriableItem.markBroken();
 
         btRigidBody rigidBody = carriableRigidBodies.remove(carriableItem);
@@ -1475,7 +1482,7 @@ public class PlayerTestScreen extends ScreenAdapter {
 
     private void syncCarriableTransforms() {
         for (CarriableItem carriableItem : worldCarriableItems) {
-            if (carriableItem.isBroken()) {
+            if (carriableItem.state() == CarriableItem.ItemState.BROKEN) {
                 continue;
             }
 

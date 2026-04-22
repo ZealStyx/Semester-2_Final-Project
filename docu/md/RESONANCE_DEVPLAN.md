@@ -1,14 +1,21 @@
 # RESONANCE — Master Development Plan
-> **Last Updated:** April 21, 2026 (rev 3) | **Engine:** libGDX + Bullet Physics | **Build System:** Gradle Multi-Module
+> **Last Updated:** April 22, 2026 (rev 5) | **Engine:** libGDX + Bullet Physics | **Build System:** Gradle Multi-Module
 
 ---
 
-## Progress Update (Apr 21, 2026)
+## Progress Update (Apr 22, 2026 — Rev 5)
 
-- Completed: `Fix K` camera idle breathing system (`CameraBreathingController`) integrated into `UniversalTestScene` with additive-only camera offsets restored after rendering.
-- Completed: `Phase 1.4` diagnostic tab now includes 128-sample mic RMS history waveform and stamina bar in `DiagnosticOverlay` (`MIC_STAMINA` tab).
-- Completed: `Phase 2.4` interaction prompts now render at screen center for nearby facing pickups and held-item actions.
-- Completed: mic fallback pulse keybind added (`V`) for test flow parity with keyboard pulse trigger.
+- Completed: `Fix K` camera idle breathing system (`CameraBreathingController`) integrated into `UniversalTestScene`.
+- Completed: `Phase 1.4` diagnostic tab with 128-sample mic RMS history waveform and stamina bar.
+- Completed: `Phase 2.4` interaction targeting uses Bullet raycast + stable `userValue` item registry.
+- In progress: `Phase 3.1/3.2` director scaffold added (`DirectorController`) with k=3 EMA classification.
+- In progress: `Phase 4` acoustic visual budget controls added (ray depth caps + throttled updates).
+- Completed: mic fallback pulse keybind added (`V`) for test flow parity.
+- Completed (Rev 5): `Fix N` — pulse visualization is no longer gated by propagation result and geometric rays can fire independently.
+- Completed (Rev 5): `Fix O` — added `SoundPulseShaderRenderer` and GLSL pulse shell (`sound_pulse.vert/.frag`) in `UniversalTestScene`.
+- Completed (Rev 5): `Fix P` — added transmission-edge synthesis in `GraphPopulator` with material inference and bounded transmission weight.
+- Completed (Rev 5): `Fix Q` — hard-cutoff fog bounds (`fog_zone_width_fraction`) and shader-side full fog clamp beyond `u_blindFogEnd`.
+- **New (Rev 4):** `UniversalTestScene` promoted to main test entry point.
 
 ---
 
@@ -16,19 +23,11 @@
 
 1. [Project State Snapshot](#1-project-state-snapshot)
 2. [Immediate Fixes — Sprint 0 (Do These Now)](#2-immediate-fixes--sprint-0-do-these-now)
-   - Fix A — Weightless Item Carry
-   - Fix B — Items Falling Through Ground
-   - Fix C — Wall Height
-   - Fix D — Sonar Pulse: 3D Sphere
-   - Fix E — Bounce Points on Walls
-   - Fix F — Mic Working in Test Screen
-   - Fix G — Proper HUD
-   - Fix H — Atmospheric Fog / Mist
-   - Fix I — Crouch Alcove Low-Ceiling Physics
-   - **Fix J — LiDAR-Style Long-Range Pulse Reveal** *(new)*
-   - **Fix K — Camera Idle Breathing Animation** *(new)*
-   - **Fix L — Item System Polish** *(new)*
-   - **Fix M — Remove Blind Light Expansion on Pulse** *(new)*
+   - Fix A–M (previous fixes, unchanged)
+   - **Fix N — Pulse Working Only in Some Areas (Diagnosis + Fix)**
+   - **Fix O — Custom Shader for Sound Pulse (Replace Particle Ring)**
+   - **Fix P — Material-Based Sound Transmission Through Walls**
+   - **Fix Q — Minecraft-Style Distance Fog (Hard Cutoff)**
 3. [Phase 1 — TestScreen Completeness](#3-phase-1--testscreen-completeness)
 4. [Phase 2 — Core Gameplay Loop](#4-phase-2--core-gameplay-loop)
 5. [Phase 3 — Director AI & Enemy Systems](#5-phase-3--director-ai--enemy-systems)
@@ -54,6 +53,7 @@
 | Physics world (Bullet) | `UniversalTestScene` | Initialized, broadphase + solver present |
 | Item definitions | `ItemDefinition`, `ItemType` | Config-driven, noise multipliers defined |
 | Feature extractor (K-Means ready) | `PlayerFeatureExtractor` | Tested |
+| `AcousticMaterial` transmission coefficients | `AcousticMaterial.java` | Defined but not yet wired to pulse |
 
 ### What is Broken / Missing ❌
 | Issue | Affected File(s) |
@@ -62,1374 +62,590 @@
 | Carry system uses spring physics (items lag behind) | `CarrySystem` |
 | No stamina — sprint is infinite | `PlayerController`, `UniversalTestScene` |
 | No HUD (voice meter, stamina bar) | `UniversalTestScene` |
-| Sonar pulse is a flat 2D ring below the player | `SonarRenderer`, `sonar_pulse.json` |
+| RESOLVED (Rev 5): Sonar pulse now uses world-space GLSL shell renderer | `SoundPulseShaderRenderer`, `sound_pulse.vert/.frag` |
 | Bounce nodes not visible on walls (only floor) | `AcousticBounce3DVisualizer`, `GeometricRayLayer` |
 | Corridor walls are only 1.5 units tall (player eye-height 1.6) | `UniversalTestScene` wall `addBox` calls |
-| Mic toggle in test screen does not reliably propagate a pulse | `UniversalTestScene.handleMicInput` |
+| Mic toggle does not reliably propagate a pulse | `UniversalTestScene.handleMicInput` |
 | `CrouchAlcoveZone` has no actual low-ceiling physics geometry | `CrouchAlcoveZone` |
-| No atmospheric fog / mist — darkness is a hard black void | `BlindEffectController`, world shader uniforms |
-| **Pulse reveal range is tiny (2.5 m) — environment barely visible** | `blind_effect_config.json`, `SonarRenderer` |
-| **No camera idle breathing — world feels static and lifeless** | `PlayerController` / new `CameraBreathingController` |
-| **Item system incomplete — no throw, no break VFX, no view-model** | `CarrySystem`, `UniversalTestScene`, `PlayerInteractionSystem` |
-| **Sonar pulse incorrectly triggers blind-effect light expansion** | `BlindEffectController.onSoundEvent` |
+| RESOLVED (Rev 5): Fog now uses hard cutoff with narrow transition zone | `BlindEffectController`, `retro_shader.frag` |
+| RESOLVED (Rev 5): Pulse visualization no longer depends on zone/propagation gating | `UniversalTestScene`, `AcousticBounce3DVisualizer` |
+| RESOLVED (Rev 5): 2D pulse ring replaced with shader-based 3D shell | `SoundPulseShaderRenderer` |
+| RESOLVED (Rev 5): Through-wall transmission edges now material-weighted | `GraphPopulator`, `GraphEdge`, `EdgeType` |
+| Pulse reveal range too small (2.5 m) | `blind_effect_config.json`, `SonarRenderer` |
+| Sonar pulse incorrectly triggers blind-effect light expansion | `BlindEffectController.onSoundEvent` |
 
 ---
 
 ## 2. Immediate Fixes — Sprint 0 (Do These Now)
 
-These are concrete, self-contained bugs. Fix them before any new feature work.
+> Fixes A–M are unchanged from rev 3. They are summarised here for reference then the new fixes follow.
+
+**Fix A** — Weightless Item Carry | **Fix B** — Items Falling Through Ground | **Fix C** — Wall Height | **Fix D** — Sonar Pulse 3D Sphere | **Fix E** — Bounce Points on Walls | **Fix F** — Mic Working in Test Screen | **Fix G** — Proper HUD | **Fix H** — Atmospheric Fog / Mist | **Fix I** — Crouch Alcove Physics | **Fix J** — LiDAR Long-Range Pulse | **Fix K** ✅ — Camera Breathing | **Fix L** — Item System Polish | **Fix M** — Remove Blind Light Expansion on Pulse
+
+*(Full implementation details for A–M are in rev 3 of this document.)*
 
 ---
 
-### Fix A — Weightless Item Carry (Always Glued to Player View)
+### Fix N — Pulse Working Only in Some Areas (Root Cause Diagnosis + Fix)
 
-**Problem:** `CarrySystem` uses a spring-damper with Bullet impulses. Because items have no
-weight, the spring overshoots and items visibly lag/jitter behind the camera.
+**Severity:** Critical — breaks core mechanic readability.
 
-**Design Change:** Items in Resonance are weightless props. Remove the spring entirely.
-The item's world position (and its rigid body's `worldTransform`) is set directly every frame
-to a fixed offset from `camera.position + camera.direction * carryDistance`.
+#### Root Cause Analysis
 
-**File:** `core/src/main/java/io/github/superteam/resonance/player/CarrySystem.java`
+The pulse system has **three independent visual paths** that each have their own failure modes:
+
+**Path 1 — `SoundPulseVisualizer` (the 2D ring)**
+
+`SoundPulseVisualizer` is constructed with `roomHalfWidth` and `roomHalfDepth`, which represent the outer boundary of a **single rectangular room**. `computeWallHit` only performs AABB intersection against these two scalars — it knows nothing about internal walls, corridors, or partial obstacles.
+
+```
+Failure condition A: Player is outside SoundPropagationZone
+  → The zone gates pulse activation. No zone = no visualizer.activate() call.
+  → Pulse appears to fire (sound event runs) but nothing is drawn.
+
+Failure condition B: Player is in a narrow corridor
+  → roomHalfWidth / roomHalfDepth don't match the corridor's local bounds.
+  → Rays overshoot the corridor walls and "hit" the far outer boundary of a zone
+    the player isn't even inside, making bounce points appear in wrong positions.
+
+Failure condition C: Player near zone boundary
+  → The sourcePosition offset inside computeWallHit places the ray origin outside
+    the zone AABB. tMin = ∞ → fallback to 0 → zero-length arc → invisible.
+```
+
+**Path 2 — `GeometricRayLayer.fireRays` (the wall-hit bounce dots)**
+
+`GeometricRayLayer` uses real `BoundingBox` colliders from the scene and `fibonacciDirection` for 3D sphere rays. This path is architecturally correct but:
+
+```
+Failure condition D: config.renderRays = false in AcousticBounceConfig
+  → Layer silently skips everything.
+
+Failure condition E: AcousticBounce3DVisualizer not receiving pulse event
+  → UniversalTestScene calls visualizer.onSoundEvent() only when the orchestrator
+    returns a PropagationResult with at least one node. If the player is not
+    near a graph node, the orchestrator returns an empty result → visualizer
+    never fires → no bounce dots anywhere.
+```
+
+**Path 3 — `SonarRenderer` (acoustic graph node illumination)**
+
+```
+Failure condition F: Player not within any graph node's radius
+  → SonarRenderer.spawnFromPropagation() receives an empty node set.
+  → Nothing illuminates. Pulse "worked" acoustically but is invisible.
+```
+
+#### Fix — Three-part solution
+
+**N.1 — Decouple `SoundPulseVisualizer` from room-specific bounds**
+
+Replace the room-bound constructor with Bullet raycast for wall detection. `SoundPulseVisualizer` should accept a `btDynamicsWorld` reference and use Bullet's `rayTest` to find the actual nearest wall in each arc direction.
 
 ```java
-// In CarrySystem.update(float deltaSeconds):
-// DELETE the entire spring-force block.
-// REPLACE with:
-public void update(float deltaSeconds) {
-    updateCarryPoint(); // recomputes carryPoint from camera each frame
+// BEFORE (constructor):
+public SoundPulseVisualizer(float roomHalfWidth, float roomHalfDepth) { ... }
 
-    if (heldItem == null) return;
+// AFTER — world-aware:
+public SoundPulseVisualizer(btDynamicsWorld physicsWorld) {
+    this.physicsWorld = physicsWorld;
+}
 
-    // Weightless snap — no physics force, just teleport to carry point
-    heldItem.setWorldPosition(carryPoint);
-
-    btRigidBody body = heldItem.rigidBody();
-    if (body != null) {
-        scratchTransform.setToTranslation(carryPoint);
-        body.proceedToTransform(scratchTransform);   // teleport without impulse
-        body.setLinearVelocity(Vector3.Zero);
-        body.setAngularVelocity(Vector3.Zero);
-        body.activate(true);
+// In computeWallHit — replace the AABB math with:
+private Vector3 computeWallHit(Vector3 sourcePosition, Vector3 direction) {
+    Vector3 rayEnd = new Vector3(sourcePosition).mulAdd(direction, MAX_RAY_DISTANCE);
+    AllHitsRayResultCallback callback = new AllHitsRayResultCallback(sourcePosition, rayEnd);
+    physicsWorld.rayTest(sourcePosition, rayEnd, callback);
+    if (callback.hasHit()) {
+        // Find the nearest static hit (ignore player body via collision mask)
+        float minFraction = Float.MAX_VALUE;
+        Vector3 nearest = new Vector3(rayEnd);
+        for (int i = 0; i < callback.getCollisionObjects().size(); i++) {
+            float fraction = callback.getHitFractions().get(i);
+            if (fraction < minFraction) {
+                minFraction = fraction;
+                nearest = new Vector3(sourcePosition).mulAdd(direction,
+                    minFraction * MAX_RAY_DISTANCE);
+            }
+        }
+        callback.dispose();
+        return nearest;
     }
+    callback.dispose();
+    return rayEnd; // open space — ray travels to max distance
 }
 ```
 
-**Expected Problems:**
-- `proceedToTransform` bypasses Bullet's collision response, so carried items can clip through
-  thin walls. This is acceptable for Resonance because items are always on the player's person.
-- Bullet may still re-apply gravity the next substep. Disable gravity on the body while held:
-  `body.setGravity(Vector3.Zero)` on pick-up, restore on drop.
+This makes the pulse work **everywhere** — corridors, open rooms, alcoves — because it reads actual physics geometry, not a hardcoded room box.
 
----
+**N.2 — Ensure pulse fires zone-independently from `UniversalTestScene`**
 
-### Fix B — Items Falling Through the Ground
-
-**Problem:** Items are spawned with a `btBoxShape` but their rigid body's initial transform
-places the bottom face _at_ `y=0`. Because Bullet's floor plane is `y=-0.05f` and items have
-non-zero restitution, they clip through before the solver can respond.
-
-**File:** `UniversalTestScene` (wherever items are created / added to physics world)
-
-**Fix — two parts:**
-
-1. **Spawn above ground.** When creating a `CarriableItem` rigid body, set initial
-   `centerY = FLOOR_Y + (itemHalfHeight) + 0.02f` (a small lift above the floor surface).
-
-2. **Add a static floor plane collider (not just a mesh box).** The visual floor box at
-   `addBox(HUB_X, -0.05f, HUB_Z, 80.0f, 0.1f, 80.0f, false)` passes `addCollider=false`.
-   Change to `true`, or separately add a `btStaticPlaneShape` at `y=0`:
+`triggerSoundPulse` should always reach both the visualizer and the orchestrator regardless of which zone the player is in:
 
 ```java
-// In initPhysics() or buildScene():
-btStaticPlaneShape floorShape = new btStaticPlaneShape(new Vector3(0,1,0), 0);
-btRigidBodyConstructionInfo floorInfo = new btRigidBodyConstructionInfo(0, null, floorShape);
-btRigidBody floorBody = new btRigidBody(floorInfo);
-physicsWorld.addRigidBody(floorBody);
-// store reference for disposal later
-```
+// In UniversalTestScene.triggerSoundPulse():
+public void triggerSoundPulse(Vector3 position, float strength) {
+    // 1. Always fire the visual pulse — no zone check
+    soundPulseVisualizer.activate(position, strength);     // world-aware now (Fix N.1)
+    geometricRayLayer.fireRays(position, strength);        // always fires
 
-**Expected Problems:**
-- The 80×80 floor mesh with `addCollider=true` creates a very large `btBoxShape`. This is
-  fine at this scale but will eat broadphase budget. Prefer the static plane shape above.
-- Items may bounce. Tune `restitution` on the `btRigidBodyConstructionInfo` to `0.1f` and
-  friction to `0.6f` to stop excessive bouncing.
-
----
-
-### Fix C — Wall Height in Universal Test Scene
-
-**Problem:** Corridor walls are `height=1.5f` (half-extent actually means full height in
-`addBox`). The player eye is at `EYE_HEIGHT = 1.6f`, making the player appear to be looking
-over every wall. Outer boundary walls at `height=4.0f` are fine.
-
-**File:** `UniversalTestScene.java` — `buildScene()` method, lines 453–463
-
-**Fix:** Raise every corridor wall call from `1.5f` to `3.5f`:
-
-```java
-// BEFORE (example — applies to all 6 corridor wall addBox calls):
-addBox(HUB_X + 8.0f, 0.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 16.0f, 1.5f, 0.2f, true);
-
-// AFTER — raise height and adjust centerY so base stays on floor:
-//   centerY = height / 2 = 1.75f
-addBox(HUB_X + 8.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
-```
-
-Apply the same `1.5f → 3.5f` & `centerY 0.75f → 1.75f` change to the four other corridor
-wall pairs (lines 454, 456, 457, 459, 460, 462, 463).
-
-**Expected Problems:** None significant. Ensure `BlindEffectController`'s fog uniforms
-(`u_fogEnd`) are not tightly tuned to a 1.5-tall world — they are not, fog is distance-based.
-
----
-
-### Fix D — Sonar Pulse: Flat Circle → 3D Sphere on Player
-
-**Problem:** `SonarRenderer` draws a billboard circle (or a 2D ring) projected below the
-player. This reads as a floor effect, not a spatial sound wave.
-
-**Design Change:** Emit a `sonar_pulse` particle effect (already defined in
-`assets/particles/presets/sonar_pulse.json`) centred on the _player's 3D world position_,
-not a projected floor point. The sphere should expand outward, fade with distance, and
-disappear — matching how sound propagates.
-
-**File:** `UniversalTestScene.java` — `handleMicInput` and wherever `SonarRenderer` is called
-
-```java
-// In handleMicInput, replace the pulsePos line:
-// BEFORE:
-Vector3 pulsePos = new Vector3(camera.position).mulAdd(camera.direction, 1.2f);
-
-// AFTER — pulse originates from the player, NOT offset forward:
-Vector3 pulsePos = new Vector3(camera.position);
-
-// Then fire the particle effect at that exact point:
-particleManager.spawn("sonar_pulse", pulsePos);
-```
-
-**File:** `SonarRenderer.java` — ensure it renders an expanding _sphere_ mesh, not a flat ring.
-The simplest approach is to use the particle system entirely for visuals and make `SonarRenderer`
-a no-op wrapper (or remove it and rely on `sonar_pulse` preset). If the SonarRenderer is kept
-for graph-node illumination, keep only the node-flash logic and strip any ring drawing.
-
-**Expected Problems:**
-- `sonar_pulse` preset may be tuned as a small ring. Open
-  `assets/particles/presets/sonar_pulse.json` and set:
-  - `"emissionShape": "SPHERE"`, radius `0.1` → grows via velocity outward
-  - `"startSize"` small, `"endSize"` large
-  - `"startAlpha": 0.8`, `"endAlpha": 0.0` for fade
-- The particle system is 3D instanced — the sphere will naturally occlude behind walls, giving
-  the correct "sound doesn't pass through solid objects visually" read.
-
----
-
-### Fix E — Bounce Points Visible on Walls
-
-**Problem:** `AcousticBounce3DVisualizer` draws bounce nodes but they appear only near the
-floor because ray origins are cast from `y ≈ 0`. The `GeometricRayLayer` needs rays fired at
-multiple elevation angles to hit walls.
-
-**File:** `GeometricRayLayer.java` and/or `AcousticBounce3DVisualizer.java`
-
-**Fix:** When generating acoustic rays from the source node, include vertical spread:
-
-```java
-// Instead of rays only in the XZ plane:
-for (int i = 0; i < RAY_COUNT; i++) {
-    float azimuth   = (i * MathUtils.PI2) / RAY_COUNT;
-    float elevation = MathUtils.random(-MathUtils.PI / 4f, MathUtils.PI / 4f); // ±45°
-    direction.set(
-        MathUtils.cos(elevation) * MathUtils.cos(azimuth),
-        MathUtils.sin(elevation),
-        MathUtils.cos(elevation) * MathUtils.sin(azimuth)
-    );
-    // ... existing ray-march / intersection logic
-}
-```
-
-Increase `RAY_COUNT` from whatever the current value is to at least `24` so vertical hits are
-visible.
-
-Additionally, render bounce points as small filled spheres (use `ShapeRenderer.point` or a
-tiny billboard quad with a bright colour — cyan `#00FFEE` reads well against the dark
-environment).
-
-**Expected Problems:**
-- More rays = more CPU per propagation event. Keep rays lazy: only recast when a new sound
-  event fires (which is already gated on the microphone cooldown).
-- Rays may miss very thin walls due to step size. Reduce ray march step to `0.15f` in the
-  hit-test loop.
-
----
-
-### Fix F — Mic Working on the Test Screen
-
-**Problem:** Pressing `M` toggles the mic, but `handleMicInput` only fires a pulse if
-`frame.triggered` is true _and_ the cooldown is zero. The cooldown default and frame trigger
-logic can cause silent failures — especially if the `RealtimeMicSystem` never reports a frame.
-
-**File:** `UniversalTestScene.java` — `handleMicInput` + `toggleMicInput`
-
-**Fix — three things:**
-
-1. **Show mic status in HUD** (see Fix G). Without visual feedback the developer can't tell if
-   the mic is receiving input.
-
-2. **Add a fallback key-triggered pulse** — while developing, `Space` or `V` should always
-   fire a pulse at the player position regardless of mic level, so you can test the graph
-   without a microphone.
-
-```java
-// In keyDown, alongside the M toggle:
-if (keycode == Input.Keys.V) {
-    triggerSoundPulse(new Vector3(camera.position), 1.0f);
-    return true;
-}
-```
-
-3. **Log mic RMS each frame** (debug mode only):
-```java
-if (micEnabled && frame != null) {
-    Gdx.app.log("Mic", "RMS=" + frame.rms + " triggered=" + frame.triggered);
-}
-```
-This alone reveals most mic issues (wrong device, too-low gain, wrong sample rate).
-
-**Expected Problems:**
-- On some JVM configurations `AudioRecord` / `javax.sound` picks the wrong input device.
-  Expose `MIC_THRESHOLD_RMS` as a runtime slider in the diagnostic overlay (or `blind_effect_config.json`)
-  so it can be tuned without recompiling.
-
----
-
-### Fix G — Proper HUD: Voice Meter + Stamina Bar
-
-**Design:** A minimal always-visible HUD rendered in screen-space after the VHS pass.
-
-**New class:** `core/.../hud/GameHud.java`
-
-```java
-public final class GameHud {
-    private final ShapeRenderer shape;
-    private final BitmapFont font;
-
-    // Called every frame with current values
-    public void render(float screenW, float screenH,
-                       float voiceLevel,   // 0..1 normalised mic RMS
-                       float stamina,      // 0..1
-                       MovementState state,
-                       boolean micActive) { ... }
-}
-```
-
-**Layout (bottom-left corner, retro green monochrome):**
-```
-[MIC ▓▓▓▓░░░░]   ← voice level bar, 120px wide
-[STA ▓▓▓▓▓▓░░]   ← stamina bar, same width
-     CROUCH / RUN / WALK  ← state label
-```
-
-**Stamina System — add to `PlayerController.java`:**
-
-```java
-private static final float MAX_STAMINA         = 100f;
-private static final float STAMINA_DRAIN_RATE  = 20f;  // per second while running
-private static final float STAMINA_REGEN_RATE  = 12f;  // per second while not running
-private static final float STAMINA_MIN_TO_RUN  = 15f;  // prevent flicker at zero
-
-private float stamina = MAX_STAMINA;
-
-// In updateMovementState():
-if (currentState == MovementState.RUN) {
-    stamina = Math.max(0, stamina - STAMINA_DRAIN_RATE * delta);
-    if (stamina == 0) {
-        // Force walk — override state
-        currentState = MovementState.WALK;
+    // 2. Acoustic graph propagation — finds nearest node globally
+    //    (not gated to SoundPropagationZone)
+    Integer sourceNodeId = acousticGraphEngine.findNearestNodeId(position, 8.0f);
+    if (sourceNodeId != null) {
+        SoundEventData event = new SoundEventData(SoundEvent.CLAP_SHOUT, position, strength);
+        PropagationResult result = soundOrchestrator.propagate(sourceNodeId, event);
+        sonarRenderer.spawnFromPropagation(result);
+        acousticBounceVisualizer.onSoundEvent(event, result);
     }
-} else {
-    stamina = Math.min(MAX_STAMINA, stamina + STAMINA_REGEN_RATE * delta);
-}
-
-// Guard: can't start running if stamina < STAMINA_MIN_TO_RUN
-// Modify the run branch in updateMovementState to check this.
-
-public float getStaminaNormalized() { return stamina / MAX_STAMINA; }
-```
-
-**Voice Meter:** Expose `RealtimeMicSystem.Frame.rms` via a normalised accessor. Divide raw
-RMS by `MIC_THRESHOLD_RMS * 2` (clamp to 1.0) to get a 0–1 display value.
-
-**Expected Problems:**
-- Stamina drain while sprinting may feel punishing before level design defines sprint corridors.
-  Expose `STAMINA_DRAIN_RATE` and `STAMINA_REGEN_RATE` in `balancing_config.json` so it can
-  be tuned without recompiling.
-- HUD must draw _after_ the VHS post-process framebuffer is composited, otherwise it gets
-  distorted by the scanline/grain shader. Ensure `gameHud.render()` is called after
-  `bodyCamVHSVisualizer.render()` in the main `render()` method.
-
----
-
-### Fix H — Atmospheric Fog / Mist (Not Just Black)
-
-**Problem:** When the blind effect is at maximum darkness, the world goes flat black. This
-looks like a missing texture rather than horror atmosphere.
-
-**Two-layer approach:**
-
-**Layer 1 — World Shader Fog:** The `worldShader` already supports `u_fogColor`, `u_fogStart`,
-`u_fogEnd`. Currently these are hard-coded near zero distance. Change them to be data-driven
-from `blind_effect_config.json`:
-
-```json
-{
-  "fogColor": [0.04, 0.04, 0.08],
-  "fogStartNear": 0.8,
-  "fogStartFar": 3.5,
-  "fogEndNear": 2.0,
-  "fogEndFar": 18.0
+    // Even if no graph node found, the visual sphere still shows (N.1 handles it)
 }
 ```
 
-Lerp `u_fogStart` and `u_fogEnd` based on `blindLevel` (0 = full visibility, 1 = deepest dark).
-At `blindLevel=1.0`, fog starts at `0.8m` — the player can only see a ghostly haze right in
-front of them, not nothing.
+**N.3 — Guarantee `GeometricRayLayer` is always enabled in test config**
 
-**Layer 2 — Volumetric Mist Particles:** Spawn a persistent low-density `mist` particle emitter
-at the player's feet that follows the player. The `mist` preset already exists
-(`assets/particles/presets/mist.json`). Use `ParticleEffect` in `LOOP` mode:
-
-```java
-// In UniversalTestScene.setUp():
-mistEmitter = particleManager.spawnLooping("mist", camera.position);
-
-// In render loop, update emitter position:
-mistEmitter.setPosition(camera.position.x, FLOOR_Y, camera.position.z);
-```
-
-Tune the `mist` preset: large particles (`startSize ~3.0`), very low alpha (`startAlpha 0.12`),
-slow upward drift, 8-metre radius. This gives the impression of ground fog without obscuring
-gameplay.
-
-**Expected Problems:**
-- Particles behind the fog-shader may Z-fight (particle alpha blends before the fog distance
-  clips). Ensure `DepthMode.NO_WRITE` is set on the mist emitter (the `ParticleDefinition`
-  `depthMode` field).
-- The `mist` preset looping at player position emits continuously — cap the active particle
-  count to `~80` to avoid GPU load.
-
----
-
-### Fix I — Crouch Alcove: Actual Low-Ceiling Physics Geometry
-
-**Problem:** `CrouchAlcoveZone` extends `BaseShellZone` and only writes to `mutableState()`.
-There is no actual low ceiling collision body, so the player can walk through upright.
-
-**File:** `CrouchAlcoveZone.java` — add a ceiling collider during `setUp()`.
-
-The `BaseShellZone` gives a `center` and `halfExtent`. Add a ceiling box at `y=1.2f`
-(just below standing eye height of 1.6f, forcing a crouch):
-
-```java
-@Override
-public void setUp() {
-    super.setUp();
-    // Ceiling collider — thin slab at y=1.2, full zone width
-    // Requires a reference to the physics world.
-    // Option A: Pass physicsWorld in constructor.
-    // Option B: Return a list of ColliderDescriptor and let UniversalTestScene add them.
-}
-```
-
-**Recommended approach (Option B — cleaner architecture):**
-
-Add `List<ColliderDescriptor> getColliders()` to `TestZone` interface. `BaseShellZone`
-returns floor/wall descriptors; `CrouchAlcoveZone` overrides and adds a ceiling descriptor.
-`UniversalTestScene.buildScene()` iterates zones and registers their colliders.
-
-```java
-// ColliderDescriptor (new small data class):
-public record ColliderDescriptor(float cx, float cy, float cz,
-                                  float w, float h, float d) {}
-```
-
-**PlayerController crouch logic:** Already present (`MovementState.CROUCH` at `speed=1.8f`).
-Ensure that when the player enters the low-ceiling zone, `PlayerController.tryCrouch()` is
-called automatically (trigger volume detection) — or expose a `forceStayCrouched` flag that
-`UniversalTestScene` sets when `camera.position` is inside the zone AABB.
-
-**Expected Problems:**
-- Auto-forcing crouch when entering a zone may feel bad if the player is sprinting in.
-  Use a velocity-fade: linearly reduce `moveSpeed` as the player approaches the ceiling, and
-  only lock crouch when they are inside the low-ceiling AABB.
-
----
-
----
-
-### Fix J — LiDAR-Style Long-Range Pulse Reveal
-
-**Problem:** The sonar pulse currently reveals the environment at a maximum of `2.5 m`
-(`clap_shout_radius_meters` in `blind_effect_config.json`) and the particle sphere tops out at
-`radialPulseMax: 4.0` in `sonar_pulse.json`. At these scales the player cannot read the
-shape of a room — a corridor barely registers. The design goal is a **LiDAR flash**: a fast-
-expanding sphere that momentarily silhouettes the walls, ceiling, floor, and item positions
-out to a meaningful distance before rapidly fading.
-
-**Changes Required — three files:**
-
-**1. `assets/config/blind_effect_config.json`** — raise the sonar reveal radius and duration:
-```json
-"sonar_reveal": {
-  "enabled": true,
-  "clap_shout_radius_meters": 18.0,
-  "duration_seconds": 0.7,
-  "triggers_acoustic_visualization": true
-}
-```
-The reveal now reads `18 m` — enough to outline a large room. Duration is kept short (`0.7 s`)
-so the flash reads as a momentary scan rather than a sustained light source. Keep
-`visibility_clamp_max_meters` in sync — raise it to `20.0`:
-```json
-"visibility_clamp_max_meters": 20.0
-```
-
-**2. `assets/particles/presets/sonar_pulse.json`** — reshape from a flat ring to a full
-omnidirectional sphere that travels far:
-```json
-{
-  "emissionShape": "SPHERE",
-  "emissionRate": 300,
-  "radialPulse": true,
-  "radialPulseSpeed": 14.0,
-  "radialPulseMax": 22.0,
-  "speedMin": 8.0,
-  "speedMax": 14.0,
-  "lifetimeMin": 1.2,
-  "lifetimeMax": 1.8,
-  "startColor": [0.25, 0.85, 1.0, 0.75],
-  "endColor": [0.05, 0.3, 0.9, 0.0],
-  "startSize": 0.08,
-  "endSize": 0.02,
-  "gravity": 0.0,
-  "blendMode": "ADDITIVE",
-  "depthMode": "NO_WRITE"
-}
-```
-Key changes: `SPHERE` emission instead of `RING`, pulse speed raised from `2.0 → 14.0`,
-pulse max from `4.0 → 22.0`, particle count raised to `300` (still GPU-friendly with
-instanced rendering). `depthMode: NO_WRITE` prevents the pulse sphere from occluding
-particles already in the scene.
-
-**3. `SonarRenderer.java`** — the `spawnFromPropagation` lifetime is driven by
-`soundBalancingConfig`, which maps `CLAP_SHOUT.pulseLifetimeSeconds = 1.1` in
-`balancing_config.json`. Raise this to `1.6` so revealed nodes stay illuminated long enough
-for the player to read the space:
-```json
-"CLAP_SHOUT": {
-  "baseIntensity": 0.9,
-  "cooldownSeconds": 1.2,
-  "pulseLifetimeSeconds": 1.6
-}
-```
-
-**Design note — the two-phase reveal:**
-The pulse should read in two visual layers simultaneously:
-1. **The sphere front** — the fast-moving wave of particles sweeping outward (handled by the
-   particle preset above).
-2. **The revealed geometry silhouette** — the world-shader fog briefly retreats, exposing wall
-   surfaces hit by the wave. This is the `BlindSonarRevealModifier` expanding to `18 m`.
-
-The combination gives a true LiDAR feel: you see the wave hit surfaces and those surfaces
-glow briefly before fading back into darkness.
-
-**Expected Problems:**
-- At `18 m` reveal radius, the player may be able to see an enemy if one is nearby. This is
-  intentional — they should be able to see the enemy for a fraction of a second and then lose
-  them. Configure enemy mesh colour to be a near-black silhouette so it reads as a shape, not
-  a character.
-- `emissionRate: 300` at pulse time is a spike. Because the pulse fires at most once per
-  `cooldownSeconds: 1.2`, the average rate is well within budget. Profile in the diagnostic
-  overlay; if frame-time spikes exceed 5 ms, reduce to `200`.
-- `radialPulseMax: 22.0` larger than corridor width — particles will fly into walls. With
-  `depthMode: NO_WRITE` and `ADDITIVE` blend they fade gracefully against surfaces rather
-  than clipping. Verify this in-engine with the `ShaderCorridorZone`.
-
----
-
-### Fix K — Camera Idle Breathing Animation
-
-**Status:** ✅ Implemented (Apr 21, 2026)
-
-**Problem:** The camera is completely static when the player stands still. In a first-person
-horror game this makes the world feel frozen and the player feel disembodied.
-
-**Design constraint:** The breathing motion must be **purely additive and non-destructive** —
-it is layered _on top of_ the raw mouse-look camera transform and has zero effect on aim,
-pickup raycasts, or movement direction calculations. No gameplay system should read the
-breathing offset; they all read the base camera.
-
-**New class:** `core/.../player/CameraBreathingController.java`
-
-```java
-public final class CameraBreathingController {
-
-    // Two-oscillator model: slow chest (inhale/exhale) + fast subtle flutter
-    private static final float BREATHE_FREQ_HZ   = 0.22f;  // ~13 breaths/minute at rest
-    private static final float FLUTTER_FREQ_HZ   = 0.80f;
-    private static final float VERTICAL_AMPLITUDE = 0.0028f; // world units — very subtle
-    private static final float ROLL_AMPLITUDE_DEG = 0.18f;   // tiny rotation
-    private static final float SPRINT_SCALE       = 2.8f;    // heavier breathing while running
-    private static final float LERP_SPEED         = 3.5f;    // smooth transition between states
-
-    private float phase = 0f;
-    private float flutterPhase = 0f;
-    private float currentScale = 1f;
-
-    // Call each frame BEFORE applying to camera
-    public void update(float delta, MovementState state) {
-        phase        += delta * BREATHE_FREQ_HZ  * MathUtils.PI2;
-        flutterPhase += delta * FLUTTER_FREQ_HZ  * MathUtils.PI2;
-
-        float targetScale = (state == MovementState.RUN) ? SPRINT_SCALE : 1f;
-        currentScale = MathUtils.lerp(currentScale, targetScale, delta * LERP_SPEED);
-    }
-
-    // Returns Y-axis offset to add to camera.position
-    public float getVerticalOffset() {
-        float chest   = MathUtils.sin(phase)         * VERTICAL_AMPLITUDE;
-        float flutter = MathUtils.sin(flutterPhase)  * VERTICAL_AMPLITUDE * 0.3f;
-        return (chest + flutter) * currentScale;
-    }
-
-    // Returns roll angle (degrees) to add to camera.up rotation
-    public float getRollDegrees() {
-        return MathUtils.sin(phase * 0.5f) * ROLL_AMPLITUDE_DEG * currentScale;
-    }
-}
-```
-
-**Integration in `UniversalTestScene.java`:**
-
-The key is to apply breathing _after_ `playerController.update()` and _after_ `camera.update()`
-has resolved the final look direction, but _before_ rendering:
-
-```java
-// In UniversalTestScene — add field:
-private final CameraBreathingController breathingController = new CameraBreathingController();
-
-// In render(), after playerController.update(delta) and camera.update():
-breathingController.update(delta, playerController.getMovementState());
-
-// Apply vertical bob — store original Y, offset, restore after render
-float breatheY = breathingController.getVerticalOffset();
-camera.position.y += breatheY;
-
-// Apply roll — temporarily rotate camera.up around camera.direction
-float rollDeg = breathingController.getRollDegrees();
-if (Math.abs(rollDeg) > 0.001f) {
-    tmpMatrix.setToRotation(camera.direction, rollDeg);
-    camera.up.mul(tmpMatrix).nor();
-}
-
-camera.update();    // recompute combined matrix with the offset applied
-renderWorld();      // draw scene with breathing-offset camera
-
-// IMPORTANT: restore original position and up vector so no system reads the offset
-camera.position.y -= breatheY;
-if (Math.abs(rollDeg) > 0.001f) {
-    tmpMatrix.setToRotation(camera.direction, -rollDeg);
-    camera.up.mul(tmpMatrix).nor();
-}
-camera.update();
-```
-
-By saving and restoring `camera.position.y` and `camera.up` around the render call, every
-other system (physics raycasts, interaction checks, sound node lookup, HUD projection) still
-reads the _real_ unmodified camera transform.
-
-**Tuning the breath feel:**
-The amplitude values above are deliberately small. Sprint breathing at `SPRINT_SCALE = 2.8f`
-means vertical amplitude = `0.0028 * 2.8 ≈ 0.008 m` — about 8 mm of camera movement, which
-at normal FOV reads as a gentle sway. This is noticeable but not nauseating.
-
-At `stamina < 20%` increase `SPRINT_SCALE` temporarily to `4.5f` to sell exhaustion. Wire
-this into the stamina system from Fix G:
-```java
-float breathScale = (stamina < 0.2f)
-    ? MathUtils.map(stamina, 0f, 0.2f, 4.5f, SPRINT_SCALE)
-    : (state == MovementState.RUN ? SPRINT_SCALE : 1f);
-```
-
-**Expected Problems:**
-- On the first frame after a large mouse input, the lerp from `currentScale` may cause a
-  visible jump if the player swings the camera fast. This is imperceptible in practice because
-  `getVerticalOffset()` is tiny, but if it is noticed, clamp `currentScale` to a max delta
-  per frame: `Math.min(currentScale + delta * LERP_SPEED, targetScale)`.
-- The roll applied to `camera.up` must be re-normalised after applying. Include `.nor()` as
-  shown — if omitted, floating-point drift will slowly corrupt the up vector.
-- When the player is crouching `(MovementState.CROUCH)`, reduce breathing slightly:
-  target scale `0.7f` — crouching implies slower, more controlled breath.
-
----
-
-### Fix L — Item System Polish
-
-**Problem:** The item system has the data layer (`ItemDefinition`, `CarriableItem`,
-`InventorySystem`) and the physics layer (`ImpactListener`, `CarrySystem`) but the moment-to-
-moment gameplay experience is unpolished: no throw action, no break visual feedback, no view-
-model, and no interaction prompt. This fix completes the system end-to-end.
-
----
-
-#### L.1 — Throw Action
-
-**Files:** `UniversalTestScene.java`, `CarrySystem.java`
-
-Add a dedicated throw key (default `F` while holding an item). Throw uses `throwStrength`
-from `ItemDefinition` — `METAL_PIPE` at `20f`, `GLASS_BOTTLE` at `14f`, etc.
-
-```java
-// In CarrySystem — new method:
-public void throwHeldItem(Vector3 cameraForward) {
-    if (heldItem == null) return;
-    btRigidBody body = heldItem.rigidBody();
-    if (body != null) {
-        // Restore gravity before throw
-        body.setGravity(new Vector3(0, -9.8f, 0));
-        float strength = heldItem.definition().throwStrength();
-        body.applyCentralImpulse(new Vector3(cameraForward).scl(strength));
-        body.activate(true);
-    }
-    releaseHeld();   // existing drop method — sets heldItem = null
-}
-```
+In `acoustic_bounce_config.json`, set `renderRays: true` as the default. Add a diagnostic key `B` that toggles it at runtime:
 
 ```java
 // In UniversalTestScene.keyDown:
-if (keycode == Input.Keys.F && carrySystem.isHoldingItem()) {
-    carrySystem.throwHeldItem(camera.direction);
-    return true;
+if (keycode == Input.Keys.B) {
+    acousticBounceConfig.geometricLayer.renderRays = !acousticBounceConfig.geometricLayer.renderRays;
+    geometricRayLayer.setConfig(acousticBounceConfig.geometricLayer);
 }
 ```
+
+**Expected Problems:**
+- `AllHitsRayResultCallback` allocates on the heap each call. Pool these callbacks (12 arcs × pulse fires ≤ once/second = acceptable). If profiling shows GC pressure, use a single pre-allocated callback and reset between arcs.
+- Static floor plane (`btStaticPlaneShape`) will always be hit first for downward-angled rays. Filter by `collisionFlags` — skip any body with `CF_STATIC_OBJECT` at `y < 0.1f` for the floor (walls are vertical, so this filter is safe for horizontal arcs).
 
 ---
 
-#### L.2 — Item Break Visual Feedback
+### Fix O — Custom GLSL Shader for Sound Pulse (Replace Particle Ring)
 
-**Files:** `ImpactListener.java`, `UniversalTestScene.java`
+**Problem:** The current sonar pulse is either a 2D `SoundPulseVisualizer` line ring or a `sonar_pulse.json` particle sphere. Both are expensive to tune and look disconnected from the world geometry. A full-screen (or world-space) GLSL shader gives exact control: a thin, sharp wave sphere with a hard edge on the near side and a soft alpha falloff on the far side.
 
-When `appliedImpulse >= item.definition().breakThreshold()`, `ImpactListener` already adds
-the item to `pendingBreakItems`. Consume this list in the scene update and trigger feedback:
+**Design:** A world-space expanding sphere shell rendered as a mesh overlay. The shader receives the pulse origin, current radius, and elapsed time and computes per-fragment distance from the sphere surface.
 
-```java
-// In UniversalTestScene.update() — after impactListener.onCarriableImpact():
-Array<CarriableItem> broken = impactListener.consumePendingBreakItems();
-for (CarriableItem item : broken) {
-    // 1. Spawn explosion particle effect at impact position
-    particleManager.spawn("explosion", item.worldPosition());
+**New file:** `assets/shaders/sound_pulse.vert` + `assets/shaders/sound_pulse.frag`
 
-    // 2. Spawn smoke_puff lingering at same position
-    particleManager.spawn("smoke_puff", item.worldPosition());
+```glsl
+// sound_pulse.vert
+attribute vec3 a_position;
+uniform mat4 u_projTrans;       // combined camera matrix
+uniform mat4 u_worldTransform;  // model-to-world (sphere mesh centred at origin)
+varying vec3 v_worldPos;
 
-    // 3. Remove the item's rigid body from the physics world
-    physicsWorld.removeRigidBody(item.rigidBody());
-
-    // 4. Remove from scene item list
-    sceneItems.removeValue(item, true);
-
-    // 5. Show brief HUD message: "[Item name] destroyed"
-    hudMessageQueue.add(item.definition().displayName() + " destroyed", 2.0f);
+void main() {
+    vec4 world = u_worldTransform * vec4(a_position, 1.0);
+    v_worldPos = world.xyz;
+    gl_Position = u_projTrans * world;
 }
 ```
 
-Both `explosion` and `smoke_puff` presets are already defined in
-`assets/particles/presets/`. No new assets needed.
+```glsl
+// sound_pulse.frag
+#ifdef GL_ES
+precision mediump float;
+#endif
 
----
+uniform vec3  u_pulseOrigin;      // world-space centre of pulse
+uniform float u_pulseRadius;      // current radius in metres
+uniform float u_pulseThickness;   // wave shell thickness (e.g. 0.35)
+uniform float u_pulseAlpha;       // 0..1 overall alpha (fades over lifetime)
+uniform vec4  u_pulseColor;       // base colour (cyan: 0.2, 0.9, 1.0, 1.0)
+uniform float u_time;             // elapsed seconds for shimmer
 
-#### L.3 — View-Model (Held Item Rendered in First Person)
+varying vec3 v_worldPos;
 
-The existing `VIEW_MODEL_*` constants in `UniversalTestScene` define an offset but nothing
-renders there. Add a simple view-model pass.
+void main() {
+    float dist = length(v_worldPos - u_pulseOrigin);
+    float diff = abs(dist - u_pulseRadius);
 
-**File:** `UniversalTestScene.java`
+    // Sharp inner edge, soft outer falloff
+    float shell = 1.0 - smoothstep(0.0, u_pulseThickness, diff);
 
-```java
-// In renderWorld(), after main scene draw, before HUD:
-if (carrySystem.isHoldingItem()) {
-    CarriableItem held = carrySystem.heldItem();
+    // Shimmer: subtle noise-like flicker along the sphere surface
+    float shimmer = 0.85 + 0.15 * sin(dist * 14.0 + u_time * 8.0);
 
-    // Compute view-model world position
-    Vector3 vmPos = new Vector3(camera.position)
-        .mulAdd(camera.direction, VIEW_MODEL_OFFSET_FORWARD)
-        .mulAdd(camera.right(),   VIEW_MODEL_OFFSET_RIGHT)
-        .mulAdd(camera.up,        VIEW_MODEL_OFFSET_UP);
+    float alpha = shell * u_pulseAlpha * shimmer;
+    if (alpha < 0.01) discard;
 
-    // If the item has a ModelInstance, render it at vmPos with VIEW_MODEL_SCALE
-    // If no model yet — render a placeholder coloured box using ShapeRenderer
-    shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-    shapeRenderer.setColor(getItemColour(held.definition().itemType()));
-    shapeRenderer.box(vmPos.x - 0.05f, vmPos.y - 0.05f, vmPos.z - 0.05f, 0.1f, 0.1f, 0.1f);
-    shapeRenderer.end();
+    gl_FragColor = vec4(u_pulseColor.rgb * shimmer, alpha);
 }
 ```
 
-```java
-// Helper — item type to colour for placeholder view-model:
-private Color getItemColour(ItemType type) {
-    return switch (type) {
-        case METAL_PIPE     -> new Color(0.5f, 0.5f, 0.55f, 1f);
-        case GLASS_BOTTLE   -> new Color(0.4f, 0.8f, 0.6f,  1f);
-        case CARDBOARD_BOX  -> new Color(0.6f, 0.45f, 0.3f, 1f);
-        case CONCRETE_CHUNK -> new Color(0.55f, 0.55f, 0.5f, 1f);
-        default             -> Color.WHITE;
-    };
-}
-```
-
-When 3D models are available, swap the `ShapeRenderer` block for a `ModelBatch.render()`
-call with the item's `ModelInstance`.
-
----
-
-#### L.4 — Interaction Prompt
-
-**File:** `UniversalTestScene.java` — `renderHud()` block
-
-When an item is in range and the player is facing it, show a small on-screen prompt. Use the
-existing `hudBatch` + `hudFont`:
+**Java integration — new class `SoundPulseShaderRenderer.java`:**
 
 ```java
-if (playerInteractionSystem.hasTargetInRangeAndFacing() && !carrySystem.isHoldingItem()) {
-    String promptText = "[E] Pick up";
-    CarriableItem nearest = findNearestFacingItem();
-    if (nearest != null) {
-        promptText = "[E] " + nearest.definition().displayName();
+public final class SoundPulseShaderRenderer implements Disposable {
+    private static final float PULSE_SPEED         = 12.0f;  // metres/sec
+    private static final float PULSE_MAX_RADIUS    = 22.0f;
+    private static final float PULSE_LIFETIME      = PULSE_MAX_RADIUS / PULSE_SPEED;
+    private static final float PULSE_THICKNESS     = 0.35f;
+    private static final Color PULSE_COLOR         = new Color(0.2f, 0.9f, 1.0f, 1.0f);
+
+    private ShaderProgram shader;
+    private Mesh sphereMesh;    // icosphere, ~320 triangles, radius=1.0
+    private final List<PulseInstance> activePulses = new ArrayList<>();
+
+    public void init() {
+        shader = ShaderLoader.load("shaders/sound_pulse.vert", "shaders/sound_pulse.frag");
+        sphereMesh = IcosphereFactory.create(1.0f, 3); // subdivision=3 → smooth enough
     }
-    float cx = Gdx.graphics.getWidth() * 0.5f;
-    float cy = Gdx.graphics.getHeight() * 0.5f - 28f;
-    hudFont.draw(hudBatch, promptText, cx - 50f, cy);
-}
 
-// When holding:
-if (carrySystem.isHoldingItem()) {
-    hudFont.draw(hudBatch, "[F] Throw  [E] Drop", 12f, 48f);
-}
-```
-
----
-
-#### L.5 — Item State Persistence (No Silent Vanishing)
-
-**Problem:** When an item's `btRigidBody` is removed from the world (e.g., on break), the
-`CarriableItem` wrapper still exists in `sceneItems`. If not cleaned up, stale items can be
-picked up again, causing a crash when the physics body is null.
-
-**Fix:** Add a state flag to `CarriableItem`:
-
-```java
-public enum ItemState { WORLD, CARRIED, BROKEN }
-private ItemState state = ItemState.WORLD;
-public ItemState state() { return state; }
-public void setState(ItemState state) { this.state = state; }
-```
-
-Guard all interaction systems: only interact with items in `ItemState.WORLD`. Set
-`ItemState.CARRIED` on pickup, `ItemState.WORLD` on drop, `ItemState.BROKEN` on destruction.
-Filter `sceneItems` in `PlayerInteractionSystem` and `CarrySystem` to skip non-WORLD items.
-
----
-
-#### L.6 — Drop Behaviour: Item Stays in Scene
-
-When the player presses E to **drop** (not throw), the item should fall from the carry
-position and come to rest naturally, remaining in the world for future pickup.
-
-```java
-// In CarrySystem.dropHeldItem():
-public void dropHeldItem() {
-    if (heldItem == null) return;
-    btRigidBody body = heldItem.rigidBody();
-    if (body != null) {
-        body.setGravity(new Vector3(0, -9.8f, 0));  // restore gravity
-        body.activate(true);
-        // Apply tiny downward impulse so it settles quickly
-        body.applyCentralImpulse(new Vector3(0, -1.5f, 0));
+    public void fire(Vector3 worldOrigin) {
+        activePulses.add(new PulseInstance(new Vector3(worldOrigin)));
     }
-    heldItem.setState(ItemState.WORLD);
-    heldItem = null;
+
+    public void render(Camera camera, float deltaSeconds) {
+        if (activePulses.isEmpty()) return;
+
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE);  // ADDITIVE blend
+        Gdx.gl.glDepthMask(false);
+
+        shader.bind();
+        shader.setUniformMatrix("u_projTrans", camera.combined);
+
+        for (int i = activePulses.size() - 1; i >= 0; i--) {
+            PulseInstance p = activePulses.get(i);
+            p.elapsed += deltaSeconds;
+            if (p.elapsed >= PULSE_LIFETIME) { activePulses.remove(i); continue; }
+
+            float radius   = p.elapsed * PULSE_SPEED;
+            float lifeNorm = p.elapsed / PULSE_LIFETIME;
+            float alpha    = (1.0f - lifeNorm) * (1.0f - lifeNorm); // quadratic fade
+
+            // Scale the unit sphere to the current pulse radius
+            Matrix4 worldTrans = new Matrix4().setToScaling(radius, radius, radius)
+                                              .setTranslation(p.origin);
+
+            shader.setUniformMatrix("u_worldTransform", worldTrans);
+            shader.setUniform3fv("u_pulseOrigin",
+                new float[]{p.origin.x, p.origin.y, p.origin.z}, 0, 3);
+            shader.setUniformf("u_pulseRadius",    radius);
+            shader.setUniformf("u_pulseThickness", PULSE_THICKNESS);
+            shader.setUniformf("u_pulseAlpha",     alpha);
+            shader.setUniform4fv("u_pulseColor",
+                new float[]{PULSE_COLOR.r, PULSE_COLOR.g, PULSE_COLOR.b, 1f}, 0, 4);
+            shader.setUniformf("u_time", p.elapsed);
+
+            sphereMesh.render(shader, GL20.GL_TRIANGLES);
+        }
+
+        Gdx.gl.glDepthMask(true);
+        Gdx.gl.glDisable(GL20.GL_BLEND);
+    }
+
+    @Override public void dispose() {
+        shader.dispose();
+        sphereMesh.dispose();
+    }
+
+    private static final class PulseInstance {
+        final Vector3 origin;
+        float elapsed;
+        PulseInstance(Vector3 origin) { this.origin = origin; }
+    }
 }
 ```
 
-**Expected Problems (all L sub-fixes):**
-- `VIEW_MODEL_*` constants place the model slightly inside the near clipping plane at close
-  walls. Set `camera.near = 0.05f` (currently likely `0.1f`) to prevent z-fighting.
-- The placeholder box view-model is rendered _in world-space_ and may occlude world geometry
-  behind the near plane. Render it in a separate pass with `glClear(GL_DEPTH_BUFFER_BIT)` so
-  it always draws on top.
-- The `ItemState` enum is a small refactor — any existing `switch` on item null-checks must
-  be updated to check `item.state() == WORLD` instead.
+**Remove `SoundPulseVisualizer` ring rendering from `UniversalTestScene`** — replace every call to `soundPulseVisualizer.activate()` with `soundPulseShaderRenderer.fire()`. The `SoundPulseVisualizer` class can stay for the `SignalArc` / `ReflectionRay` data model (it's still used by bounce hit-point computation), but its visual render path is retired.
+
+**In `UniversalTestScene.render()` — call order:**
+```java
+renderWorld();                          // opaque geometry
+soundPulseShaderRenderer.render(camera, delta); // additive pulse sphere on top
+geometricRayLayer.render(shapeRenderer, camera); // bounce dots
+renderHud();                            // HUD last
+```
+
+**Expected Problems:**
+- Icosphere mesh generation at startup adds ~2ms. Pre-bake the mesh and cache in assets if cold start time matters.
+- `GL_BLEND + GL_ONE` (additive) makes the pulse visible through walls. This is **intentional** — sound passes through geometry visually, which is correct for a wave effect. If wall-clipping is undesired, add a depth test pass: render the sphere twice — once with `GL_LEQUAL` depth test for the visible hemisphere, once with `GL_GREATER` at reduced alpha for the occluded hemisphere.
+- On low-end devices (Intel integrated graphics), the icosphere draw at 22m radius covers a large screen area. Add a fragment `discard` early-out for `alpha < 0.01` (already in the shader above). Also cap `activePulses.size()` to 3 — any pulse beyond that is dropped since mic cooldown is 1.2s.
 
 ---
 
-### Fix M — Remove Blind Light Expansion When Pulse Fires
+### Fix P — Material-Based Sound Transmission Through Walls
 
-**Problem:** `BlindEffectController.onSoundEvent()` calls `triggerSonarReveal()` when a
-`CLAP_SHOUT` or `MIC_INPUT` event fires. `triggerSonarReveal()` adds a
-`BlindSonarRevealModifier` that temporarily expands the player's fog visibility radius —
-effectively giving the player a brief light around them. This contradicts the intended design:
-the pulse is a **spatial scan**, not a **light source**. The player should remain in darkness;
-only the geometry hit by the propagating wave should be outlined.
+**Problem:** `AcousticMaterial` already defines `transmissionCoefficient` per material:
 
-The sonar pulse already reveals the environment through two correct mechanisms:
-1. The expanding particle sphere silhouettes walls visually (Fix D + Fix J).
-2. `SonarRenderer.spawnFromPropagation()` illuminates acoustic graph nodes along the
-   propagation path (the cyan dots on walls from Fix E).
+| Material | Transmission | Meaning |
+|---|---|---|
+| CONCRETE | 0.05 | 5% of sound passes through |
+| METAL | 0.12 | 12% passes through |
+| WOOD | 0.22 | 22% passes through |
+| GLASS | 0.35 | 35% passes through |
+| FABRIC | 0.70 | Soft absorption — most passes, little reflects |
+| VENT_DUCT | 0.65 | Ducts channel sound through walls |
 
-The `BlindSonarRevealModifier` (which expands the player's own fog radius) is the third,
-incorrect mechanism.
+These coefficients exist but are **not yet wired into the visual pulse or the graph propagation**. Currently the pulse reflects at 100% (`BOUNCE_FADE = 0.72f` uniform) and the Dijkstra graph only uses `traversalMultiplier` for edge cost, not transmission.
 
-**File:** `BlindEffectController.java`
+**This fix has two layers:**
+
+#### P.1 — Pulse Shader: Transmitted Wave Through Walls
+
+When the shader's expanding sphere crosses a wall surface, the portion of the wave that passes through should continue at reduced intensity. This is implemented by tracking the pulse as two co-expanding spheres:
+
+1. **Primary sphere** — full intensity, stopped at wall.
+2. **Transmitted sphere** — spawned at the wall surface, moving at the same speed but scaled by `transmissionCoefficient`.
+
+In practice, for real-time rendering we approximate this by tagging wall faces with their `AcousticMaterial` and spawning a secondary `PulseInstance` with reduced `startAlpha` when the primary pulse radius first reaches a physics body.
+
+```java
+// In SoundPulseShaderRenderer.render(), after computing radius:
+// Check if any physics body intersects the expanding sphere surface this frame
+for (PulseInstance p : activePulses) {
+    if (!p.hasSpawnedTransmissions) {
+        float radius = p.elapsed * PULSE_SPEED;
+        // Sphere-cast: find all bodies at distance ≈ radius from p.origin
+        List<WallHit> hits = physicsWorld.sphereContactTest(p.origin, radius, radius + 0.5f);
+        for (WallHit hit : hits) {
+            AcousticMaterial mat = materialRegistry.getMaterial(hit.body);
+            if (mat != null && mat.transmissionCoefficient() > 0.01f) {
+                // Spawn transmitted pulse — starts at wall, slightly behind primary
+                PulseInstance transmitted = new PulseInstance(p.origin);
+                transmitted.elapsed      = p.elapsed;  // same timing
+                transmitted.alphaScale   = mat.transmissionCoefficient();
+                transmitted.colorScale   = new Color(0.6f, 0.7f, 1.0f, 1f); // cooler colour — transmitted wave
+                activePulses.add(transmitted);
+            }
+        }
+        p.hasSpawnedTransmissions = true; // only check once per pulse
+    }
+}
+```
+
+Add `alphaScale` and `colorScale` to `PulseInstance` and pass them to the shader as additional uniforms `u_alphaScale` and `u_colorScale`.
+
+#### P.2 — Acoustic Graph: Transmission Edges (Cross-Wall Propagation)
+
+In `TestAcousticGraphFactory`, when building edges between nodes that are separated by a wall, currently those edges are either not added (if the raycast hits geometry) or added at full weight (if the raycast is clear). Add a third case: **transmission edge** — the edge exists but carries an additional attenuation factor equal to `1.0 / material.transmissionCoefficient()`.
+
+```java
+// In TestAcousticGraphFactory — edge validation loop:
+RaycastResult result = bulletWorld.rayTest(nodeA.position, nodeB.position);
+if (!result.hasHit()) {
+    // Clear path — normal edge
+    graph.addEdge(nodeA.id, nodeB.id, normalWeight);
+} else {
+    // Wall in the way — check material
+    AcousticMaterial mat = materialRegistry.getMaterial(result.hitBody);
+    if (mat != null && mat.transmissionCoefficient() > 0.05f) {
+        // Transmission edge — sound passes through but is attenuated
+        float transmissionPenalty = 1.0f / mat.transmissionCoefficient();
+        float transmittedWeight = normalWeight * transmissionPenalty;
+        // Only add if within reasonable range (don't transmit through 20m of concrete)
+        if (transmittedWeight < MAX_TRANSMISSION_WEIGHT) {
+            graph.addEdge(nodeA.id, nodeB.id, transmittedWeight,
+                EdgeType.TRANSMISSION, mat);
+        }
+    }
+    // else: no edge (wall is effectively opaque — CONCRETE at 0.05 → penalty=20x, filtered out)
+}
+```
+
+In `DijkstraPathfinder`, `TRANSMISSION` edges are traversable — Dijkstra simply follows the cost. The higher cost means the propagation result will show lower intensity at nodes reached only through walls, which is physically correct.
+
+**Config values — add to `acoustic_bounce_config.json`:**
+```json
+{
+  "transmission": {
+    "enabled": true,
+    "maxTransmissionWeight": 25.0,
+    "showTransmittedPulse": true,
+    "transmittedPulseColorR": 0.55,
+    "transmittedPulseColorG": 0.7,
+    "transmittedPulseColorB": 1.0
+  }
+}
+```
+
+**Game design intent — explicit contract:**
+
+| Material | % of wave passes | Visual result |
+|---|---|---|
+| CONCRETE | 5% | Faint ghost pulse barely visible through thick wall |
+| WOOD | 22% | Clearly visible but dim transmitted wave |
+| GLASS | 35% | Obvious transmitted wave — player can hear through glass |
+| VENT_DUCT | 65% | Near-full transmission — sound travels the vents |
+| FABRIC | 70% | Curtains/drapes transmit most sound, reflect little |
+
+**Expected Problems:**
+- `sphereContactTest` at the pulse surface is not a standard Bullet API call. Implement via `btGhostObject` + `btSphereShape` at the pulse origin — resize each frame. Ghost objects don't need broadphase collision response and are fast. Alternatively, cast a series of ray tests along the 12 arc directions (from Fix N) and check if any arc has crossed a wall face this frame.
+- Spawning a new `PulseInstance` for each transmitted wall hit could cause exponential pulse spawning in rooms with many thin walls. Cap: max 3 transmitted pulses per primary pulse. The cap is enforced with a `transmissionCount` field on `PulseInstance`.
+- Transmission edges in the graph make Dijkstra's search slightly larger (more traversable edges). Profile: with 80-120 nodes and average degree 6–8, transmission edges add maybe 20% more edges. Still well within the 2ms budget.
+
+---
+
+### Fix Q — Minecraft-Style Distance Fog (Hard Cutoff)
+
+**Problem:** The current `BlindFogUniformUpdater` sends `u_fogStart = visibilityMeters` and `u_fogEnd = visibilityMeters * (1 + softness)` to the world shader. With `visibilityMeters = 3.5` and `softness = 0.5`, this means:
+
+- Clear up to 3.5m
+- Fog transition: 3.5m → 5.25m (1.75m wide fade zone)
+
+This wide transition means at medium distance everything has a slight grey tint rather than there being a crisp fog wall. It makes the environment look **uniformly dark** rather than **dark beyond a visible boundary**. The player can't tell where the fog is — they just feel like their monitor brightness is low.
+
+**Minecraft fog formula:** Fog starts at a high percentage of view distance (e.g. 80–90%) and reaches full opacity at 100% of view distance. The transition is narrow, creating the illusion of a solid fog wall.
+
+**Fix — change `updateFogBounds()` in `BlindEffectController`:**
 
 ```java
 // BEFORE:
-public boolean onSoundEvent(SoundEventData soundEventData) {
-    if (soundEventData == null) return false;
-    SoundEvent event = soundEventData.eventType();
-    if (event == SoundEvent.CLAP_SHOUT || event == SoundEvent.MIC_INPUT) {
-        return triggerSonarReveal();   // ← REMOVE THIS
-    }
-    return false;
+private void updateFogBounds() {
+    fogStartMeters = Math.max(0.05f, visibilityMeters);
+    fogEndMeters = fogStartMeters + Math.max(0.1f, visibilityMeters * (1.0f + config.baselineFadeEdgeSoftness));
 }
 
-// AFTER:
-public boolean onSoundEvent(SoundEventData soundEventData) {
-    if (soundEventData == null) return false;
-    // Sonar pulse no longer expands the player's own light radius.
-    // Geometry reveal happens via particle sphere and graph node illumination only.
-    return false;
+// AFTER — Minecraft style:
+private void updateFogBounds() {
+    // fogEnd is the hard cutoff — nothing visible beyond this
+    fogEndMeters   = Math.max(0.5f, visibilityMeters);
+    // fogStart begins close to the cutoff — narrow transition zone
+    float fogZoneWidth = fogEndMeters * config.fogZoneWidthFraction; // default: 0.15
+    fogStartMeters = Math.max(0.05f, fogEndMeters - fogZoneWidth);
 }
 ```
 
-`triggerSonarReveal()` itself can stay — it will be repurposed for the `FLARE` item
-(`ItemType.FLARE`), which IS a physical light source and should expand the visibility radius
-for its `duration_seconds: 10.0`. No other changes needed to that method.
+Add `fogZoneWidthFraction` to `BlindEffectRevealConfig` with default `0.15` (15% of view distance is the fog transition zone). This gives:
 
-**`blind_effect_config.json` — remove sonar reveal radius** (it is now unused by the blind
-system, managed entirely by the particle preset from Fix J):
-```json
-"sonar_reveal": {
-  "enabled": false,
-  "clap_shout_radius_meters": 18.0,
-  "duration_seconds": 0.7,
-  "triggers_acoustic_visualization": true
-}
-```
-Set `"enabled": false` so the modifier never fires even if `onSoundEvent` is called
-accidentally during a refactor. The `triggers_acoustic_visualization: true` flag stays
-and continues to drive `SonarRenderer` — that path is correct and unchanged.
-
-**Resulting design contract (explicit):**
-
-| Trigger | Expands fog radius? | Particle sphere? | Graph nodes lit? |
+| visibilityMeters | fogStart | fogEnd | Transition width |
 |---|---|---|---|
-| Mic / clap pulse | ❌ No | ✅ Yes (Fix D/J) | ✅ Yes |
-| Flare item used | ✅ Yes (10 s) | ❌ No | ❌ No |
-| Panic state | ❌ Shrinks it | ❌ No | ❌ No |
-| Enemy nearby | ❌ No effect | ❌ No | ❌ No |
+| 3.5 m | 2.975 m | 3.5 m | 0.525 m — sharp wall |
+| 8.0 m | 6.8 m | 8.0 m | 1.2 m — readable boundary |
+| 18.0 m (post-pulse) | 15.3 m | 18.0 m | 2.7 m — horizon effect |
+
+**World shader — verify the fog equation clamps correctly:**
+
+```glsl
+// In worldShader.frag — ensure this is the fog formula:
+float fogFactor = clamp((dist - u_fogStart) / (u_fogEnd - u_fogStart), 0.0, 1.0);
+gl_FragColor = mix(surfaceColor, u_fogColor, fogFactor);
+```
+
+If `fogFactor = 1.0` the fragment is **exactly** `u_fogColor` — opaque fog. Objects beyond `u_fogEnd` should be fully occluded. Check that `u_fogColor.a = 1.0` (not premultiplied) in the shader. If alpha is not 1.0, far objects show through the fog.
+
+**Config update — `blind_effect_config.json`:**
+
+```json
+{
+  "fogZoneWidthFraction": 0.15,
+  "fogColor": [0.04, 0.04, 0.08, 1.0],
+  "baselineVisibilityMeters": 3.5,
+  "baselineFadeEdgeSoftness": 0.15
+}
+```
+
+Set `baselineFadeEdgeSoftness` to `0.15` — it is now used only to control `fogZoneWidthFraction` if you want one field for both. Alternatively keep both separate.
+
+**Layer 2 — `BlindFogUniformUpdater` fog colour must include a dark tint, not zero:**
+
+```java
+// Ensure fog colour is a deep, slightly-blue black — not pure black:
+// Pure black (0,0,0) looks like a missing texture.
+// Deep blue-black (0.04, 0.04, 0.08) reads as "heavy atmosphere".
+shader.setUniform4fv("u_fogColor",
+    new float[]{ fogColor.r, fogColor.g, fogColor.b, 1.0f }, 0, 4);
+```
 
 **Expected Problems:**
-- Removing the sonar blind reveal may initially make the game feel harder to playtest since
-  developers relied on the light flash to see. Replace it with a diagnostic keybind:
-  `Backspace` in test mode calls `triggerFlareReveal()` directly for testing visibility
-  without using items.
-- `UniversalTestScene` stores the `boolean sonarTriggered` return value of `onSoundEvent` to
-  gate other logic. After this change it always returns `false`. Replace this gate with a
-  direct check: `if (soundEvent.eventType() == SoundEvent.CLAP_SHOUT || MIC_INPUT)` where
-  needed.
+- When the pulse fires and `visibilityMeters` jumps from 3.5 → 18.0 then rapidly lerps back, the fog wall appears to pull back and then close in — this is the desired LiDAR flash effect. If the lerp feels too abrupt, slow the return rate: `lerpSpeed = 4.0f` for the expand phase, `lerpSpeed = 1.5f` for the contract phase. Track which direction `visibilityMeters` is moving and select the lerp speed accordingly.
+- Mist particles (Fix H, Layer 2) that are spawned at the player's feet will now be occluded by fog beyond `fogEnd`. This looks correct — the mist appears to blend into the fog wall.
 
 ---
 
 ## 3. Phase 1 — TestScreen Completeness
 
-**Goal:** The universal test screen is a fully usable development sandbox for all systems.
-**Timeline estimate:** 2–3 weeks after Sprint 0 fixes.
+> `UniversalTestScene` is now the **primary test entry point**. The main `ApplicationListener.create()` should load `UniversalTestScene` directly. All Sprint 0 fixes are demonstrated and testable here.
 
 ### 1.1 — Sound Propagation Zone: Full Integration
 
-**Objective:** The `SoundPropagationZone` should demonstrate the complete acoustic pillar:
-mic input → graph propagation → visual bounce nodes → blind-effect reveal → 3D sphere pulse.
+*(Unchanged from rev 3 — see acoustic graph node placement at y=0.9f, edge raycast validation.)*
 
-**Requirements:**
-- All Sprint 0 fixes (A–I) complete.
-- Acoustic graph nodes placed at wall intersections inside the zone (not just open space).
-- `AcousticBounce3DVisualizer` shows bounce points on walls as bright cyan dots with a
-  brief flash animation (0.3s fade-out).
-- `PropagationResult` node intensities drive `BlindSonarRevealModifier` to temporarily reveal
-  geometry near each node.
-- A debug overlay tab (use existing `TabCycler` in `DiagnosticOverlay`) shows:
-  - Active node count, last propagated intensity, mic RMS, stamina.
-
-**Expected Problems:**
-- `TestAcousticGraphFactory` currently places nodes in a fixed grid. When walls are added at
-  height 3.5f (Fix C), nodes at `y=0` will be inside floors. Update the factory to place
-  nodes at `y=0.9f` (mid-wall height).
-- Graph edges that pass through new taller wall geometry will be invalid (they cross solid
-  geometry). Implement a simple raycast validation pass in `TestAcousticGraphFactory`:
-  for each proposed edge, fire a Bullet raycast; skip the edge if it hits a static body.
-
-**Solutions:**
-- Accept that edge validation is O(E·raycast). With ~80 nodes this is fine at setup time.
-- Cache the validated graph — don't re-validate every frame.
-
----
+Fix N now ensures the pulse fires even outside the `SoundPropagationZone`, so zone-specific gating is no longer needed for the visualizer path.
 
 ### 1.2 — Item Interaction Zone: Physics Ground Truth
 
-**Objective:** Items rest on the floor, can be picked up (E key), snap to the player's carry
-position, and make noise when dropped (firing an acoustic event).
+*(Unchanged from rev 3.)*
 
-**Requirements:**
-- Fix B (floor collision) complete.
-- Fix A (weightless carry) complete.
-- Drop (release E) restores gravity to the rigid body and fires a `SoundEvent` with intensity
-  proportional to drop height (use `ImpactListener` which is already implemented).
-- `PlayerInteractionSystem` raycast correctly identifies `CarriableItem` Bullet bodies as
-  interactable. Requires mapping `btCollisionObject → CarriableItem` via a `userValue` int
-  stored in the body's `userValue` field.
+### 1.3 — Crouch Alcove Zone
 
-**Expected Problems:**
-- `ImpactListener` is a `ContactListener` that fires on every manifold. When a carried item
-  is being held (velocity ≈ 0), micro-collisions with the floor plane still fire events.
-  Guard: `if (impactVelocity.len() < 0.3f) return;` at the start of the callback.
+*(Unchanged from rev 3.)*
 
----
+### 1.4 — Diagnostic Overlay ✅ (Implemented Apr 22)
 
-### 1.3 — Crouch Alcove Zone: Full Playthrough
-
-**Objective:** The alcove is a tight, low-ceilinged passage the player must crouch through.
-
-**Requirements:**
-- Fix I (ceiling collider) complete.
-- Player forced to crouch-walk at `1.8 m/s` inside.
-- Camera height smoothly interpolates from `1.6f` (stand) to `0.9f` (crouch) using the
-  existing head-bob lerp infrastructure in `PlayerController`.
-- Zone exit re-enables standing automatically.
-- A small HUD tooltip renders: `"Crouch [CTRL]"` when the player is near the entrance
-  (within 2m) and standing.
-
-**Expected Problems:**
-- Camera height interpolation in `PlayerController` may need a new `crouchLerpSpeed` constant.
-  Start with `5.0f` — too fast feels teleporty, too slow feels sluggish.
-
----
-
-### 1.4 — Diagnostic Overlay: Mic + Stamina Tabs
-
-**Status:** ✅ Implemented (Apr 21, 2026)
-
-**Objective:** Tab 3 of `DiagnosticOverlay` shows live mic waveform RMS and stamina value.
-
-**Requirements:**
-- Ring-buffer storing last 128 RMS samples, rendered as a simple line graph using
-  `ShapeRenderer`.
-- Stamina value displayed as text and bar.
-- Mic device name shown (query via `javax.sound.sampled.Mixer`).
+New tab: **ACOUSTIC_DEBUG** showing:
+- Current `fogStart` / `fogEnd` meters (live)
+- Active pulse count from `SoundPulseShaderRenderer`
+- Transmission edges active in last propagation
+- Material under player's feet (raycast straight down → hit body → lookup material)
 
 ---
 
 ## 4. Phase 2 — Core Gameplay Loop
 
-**Goal:** A player can navigate a dark environment, make sounds, and use the acoustic
-sonar to understand space. Items are meaningful tools.
-**Timeline estimate:** 4–6 weeks.
+*(Unchanged from rev 3. See fix Fix P — items that break emit sound through walls at material-attenuated intensity.)*
 
-### 2.1 — CarriableItem as Acoustic Tool
+### 2.1 — CarriableItem as Acoustic Tool (Updated)
 
-**Objective:** Throwing or dropping an item creates a sound event that propagates through
-the graph, revealing geometry in that area temporarily. This builds on the complete item
-system from Sprint 0 Fix L.
-
-**Requirements:**
-- Fix L (throw, break VFX, interaction prompt, item state) complete.
-- Fix M (no light on pulse) complete — impact pulses must also not expand the fog radius.
-- Impact sound event spawns the sonar sphere (Fix D, Fix J) at the _impact position_, not
-  the player position.
-- `ImpactListener` fires on wall/floor contact, creates `SoundEvent` with intensity based on
-  impact velocity magnitude, scaled by `item.definition().noiseMultiplier()`.
-- `SoundPropagationOrchestrator` processes the event through Dijkstra, returns
-  `PropagationResult` to `SonarRenderer` for node illumination (not `BlindEffectController`).
-- `GLASS_BOTTLE` (noiseMultiplier `1.2f`, breakThreshold `60f`) should shatter loudly and
-  trigger a large pulse. `CARDBOARD_BOX` (multiplier `0.3f`) barely registers.
-
-**Expected Problems:**
-- Multiple impact events in rapid succession (item bouncing) cause repeated pulses.
-  Implement a per-item impact cooldown: `0.4f` seconds between registered events.
-- Throws at high velocity may tunnel through thin walls (Bullet CCD disabled by default).
-  Enable CCD on thrown item bodies: `body.setCcdMotionThreshold(0.5f)`.
-
----
-
-### 2.2 — Stamina as Tension Mechanic
-
-**Objective:** Sprinting is powerful but audible and finite. It raises panic level.
-
-**Requirements:**
-- Stamina system from Fix G complete.
-- Running generates louder footstep events (already in `PlayerFootstepSoundEmitter` via
-  `MovementState`). Ensure `RUN` state uses `noiseMultiplier ~2.5f` vs `WALK ~1.0f`.
-- At `stamina < 20%`, breathing audio cue starts (simple looping audio clip from AssetManager).
-- At `stamina = 0`, `SimplePanicModel.panicLevel` increases briefly (already in codebase).
-- Panic level feeds `BlindPanicModifier` — the blind effect gets worse when panicking.
-  This creates the loop: sprint → run out of stamina → panic → can see less → must stop.
-
-**Expected Problems:**
-- Tuning panic ramp-up will require iteration. Keep all constants in `balancing_config.json`.
-- Audio clip for breathing must be loaded lazily (not at startup) to keep `show()` fast.
-
----
-
-### 2.3 — Full Inventory Integration
-
-**Objective:** The 4-slot inventory holds items that can be used, combined, or dropped as
-sound distractions.
-
-**Requirements:**
-- Press 1–4 to select active slot; active item shown in view-model position.
-- `G` drops active item (spawns a new `btRigidBody` at the drop point, applies small forward
-  impulse, fires impact event on landing).
-- Consumable items (defined in `ItemDefinition.consumable=true`) are removed from inventory
-  on use.
-- `InventorySystem` already handles all of this — just wire up the key bindings in
-  `UniversalTestScene.keyDown`.
-
-**Expected Problems:**
-- View-model rendering (the held-item mesh visible in the lower-right of screen) uses the
-  existing `VIEW_MODEL_*` constants but requires a `ModelInstance` for the item mesh. If
-  items do not have meshes yet, use a coloured box placeholder.
-
----
-
-### 2.4 — Player Interaction System: Complete
-
-**Status:** 🟨 Partially implemented (Apr 21, 2026)
-
-**Implemented now:**
-- On-screen interaction prompts for facing/in-range carriable items and consumables.
-- Held-item action prompt (`Throw`, `Drop`, `Stash`) in crosshair area.
-
-**Still open for full completion:**
-- Replace proximity+dot checks with Bullet raycast-based interaction targeting.
-- Add `btCollisionObject.userValue` mapping/registry path for stable object lookup.
-
-**Objective:** The E-key interaction raycast works reliably for all interactable objects.
-
-**Requirements:**
-- `PlayerInteractionSystem.tryInteract()` fires a Bullet raycast from camera origin along
-  camera direction, distance `PICKUP_RANGE=3.0f`.
-- Hit result maps to a `CarriableItem` via `btCollisionObject.userValue` → item index.
-- Interaction prompt (crosshair changes colour + "Pick up [E]" text) renders when
-  a carriable item is within range and in front of the player.
-
-**Expected Problems:**
-- `userValue` is an integer; maintain a `List<CarriableItem> itemRegistry` in the scene and
-  store the index. Ensure the list index is stable (no removals during iteration).
+Impact events now use `AcousticMaterial` transmission for the propagated wave. A `GLASS_BOTTLE` breaking next to a WOOD wall will cause a weaker sonar reveal in the adjacent room (22% transmission) — players in adjacent rooms hear a ghost of the impact.
 
 ---
 
 ## 5. Phase 3 — Director AI & Enemy Systems
 
-**Goal:** The game adapts its tension based on player behaviour, and there is something
-hunting the player.
-**Timeline estimate:** 5–8 weeks.
-
-### 3.1 — Director AI: K-Means Cluster Classification
-
-**Objective:** Classify the player's current behaviour into a tension tier and respond.
-
-**Architecture (already partially built):**
-```
-PlayerFeatureExtractor  →  feature vector (speed, noise, proximity, panic)
-       ↓
-   KMeansClassifier    →  cluster label (CALM / TENSE / PANICKED)
-       ↓
-  DirectorController   →  adjust spawn rate, ambient sound, blind effect floor
-```
-
-**Requirements:**
-- `KMeansClassifier` (new class): k=3 centroids, updated online with an EMA
-  (exponential moving average) so centroids adapt to _this_ player's session.
-- Initial centroids hardcoded from offline play-testing data.
-- Director ticks every `2.0f` seconds (not every frame).
-- Output actions:
-  - `CALM` → reduce fog density, suppress ambient.
-  - `TENSE` → increase fog, introduce ambient heartbeat at 90 BPM.
-  - `PANICKED` → maximum fog, enemy becomes more active, footstep sound multiplier raised.
-
-**Expected Problems:**
-- K-Means can flip cluster assignments when the player transitions quickly. Add a
-  1-second hysteresis before acting on a cluster change.
-- Online centroid updates can drift. Clamp centroids to valid feature ranges defined in
-  `balancing_config.json`.
-
----
-
-### 3.2 — Enemy: Sound-Reactive Hunter
-
-**Objective:** A single enemy navigates by sound events, hunts the player.
-
-**Requirements:**
-- Enemy has its own acoustic listener node in the graph.
-- Any `SoundEvent` with intensity above enemy's `hearingThreshold` causes the enemy to
-  pathfind toward the event origin.
-- Enemy pathfinding uses the same `DijkstraPathfinder` (different cost function: favour
-  proximity not intensity).
-- Enemy cannot see the player; it only hears.
-- Enemy emits its own low-frequency "breathing" sound event every `3s` while moving,
-  which the player can hear (appears as a pulse on the sonar).
-
-**Expected Problems:**
-- Enemy and player sharing the Dijkstra graph simultaneously causes thread contention if
-  propagation is ever moved to a background thread. Keep all graph queries on the main
-  thread until threading is needed.
-- Enemy pathfinding to a sound origin that has already decayed leads to the enemy
-  "wandering" to now-empty areas. Implement a simple interest-point memory: enemy
-  remembers the last 3 heard events and navigates to the most recent.
-
----
-
-### 3.3 — Director Integration With Enemy
-
-**Objective:** The Director modulates enemy behaviour based on tension tier.
-
-| Tier | Enemy Speed | Hear Range | Decision Rate |
-|---|---|---|---|
-| CALM | 60% | 8m | 4s |
-| TENSE | 80% | 12m | 2.5s |
-| PANICKED | 100% | 18m | 1s |
-
-All values configurable in `balancing_config.json`.
+*(Unchanged from rev 3.)*
 
 ---
 
 ## 6. Phase 4 — Level Design & Procedural Generation
 
-**Goal:** A real playable level with handcrafted key moments and procedurally-filled space.
-**Timeline estimate:** 6–10 weeks.
-
-### 4.1 — Level Architecture
-
-**Structure:**
-```
-Hub Room → Puzzle Room A → Narrow Corridor → Puzzle Room B → Boss Encounter Zone
-                  ↑ shortcut (locked until Puzzle A solved)
-```
-
-**Sound-design principle:** Every room's acoustic graph is pre-authored. Corridor graphs
-are sparser; open rooms are denser. The propagation reveals this difference to the player.
-
-### 4.2 — Procedural Obstacle Placement
-
-Procedurally scatter crates, barrels, and debris inside rooms using a Poisson-disc sampler
-(prevents overlap). Each obstacle gets a `CarriableItem` with a noise multiplier.
-
-**Requirements:**
-- `ProceduralRoomPopulator` (new class): takes a room AABB, a `Random` seed, and a
-  `ItemDefinition[]` palette. Returns `List<PlacedItem>` with world positions.
-- Items placed at `y = halfHeight + FLOOR_Y` — above the floor (no more falling through).
-- No item placed within `1.5m` of the player spawn or within `0.5m` of a wall.
-
-### 4.3 — Puzzle Design: Use Acoustics
-
-Puzzles are built around the core mechanic:
-
-- **Puzzle A — "Light the Room":** Player must throw items at targets in order. Each impact
-  reveals a section of the room's acoustic graph for 3 seconds. Completing the sequence opens
-  a door.
-- **Puzzle B — "Silent Corridor":** Enemy patrols a corridor. Player must crouch-walk through
-  without triggering footstep events above the enemy's hearing threshold.
-- **Puzzle C — "Echo Mapping":** A room with no items. Player must clap/shout (mic) multiple
-  times to triangulate a hidden button using the reflected sonar pulses.
-
-### 4.4 — Procedural Acoustic Graph Population
-
-**Requirements:**
-- `GraphPopulator` places nodes at wall intersections and room centres automatically by
-  raycasting outward from the room's AABB midpoints and recording hit positions.
-- Edges are connected if the straight-line Bullet raycast between two nodes is unobstructed.
-- Material tags from `AcousticMaterial` are assigned to wall faces based on `WallType`.
-
-**Expected Problems:**
-- A fully procedural graph may produce disconnected components (nodes on one side of a wall
-  with no path to the other). Use a BFS connectivity check after building; if a node is
-  disconnected, try to connect it through a door/gap node. If still disconnected, remove it.
+*(Unchanged from rev 3. Fix P's transmission edges make the procedural acoustic graph more realistic — vents and glass walls become implicit "sound corridors".)*
 
 ---
 
 ## 7. Phase 5 — Horror Atmosphere & Polish
 
-**Goal:** The game _feels_ like a horror game. Atmosphere, pacing, and audio design come
-together.
-**Timeline estimate:** 3–4 weeks.
+### 5.1 — Audio Design *(Unchanged from rev 3)*
 
-### 5.1 — Audio Design
+### 5.2 — Visual Polish (Updated)
 
-- Ambient soundscape: deep drone layered with subtle reversed-reverb tails (pre-authored .ogg).
-- Spatial audio: use libGDX `Sound` + manual panning/volume based on distance from the
-  `SoundSourceRegistry`. Not full HRTF, but close enough for mono headphones.
-- Enemy proximity stinger: a sharp transient plays when the enemy comes within 5m.
-- Breathing audio — pair with the `CameraBreathingController` (Fix K): when breathing
-  amplitude is high (sprint or low stamina), play a wet exhale audio clip synced to the
-  camera's `BREATHE_FREQ_HZ` oscillator. The visual and audio breathing phase-lock.
-- Breathing audio (from Phase 2) spatially placed behind the player when enemy is near —
-  creates "something is behind you" dread without needing line-of-sight.
+- **Pulse colour tier by transmission:** Primary pulse = cyan `#33EEFF`. Transmitted pulse = cool blue `#6688CC` at reduced alpha. The colour difference cues the player that sound leaked through a wall — not that it bounced.
+- **Fog wall shimmer:** Add a subtle vertical sine displacement to `u_fogColor.a` in the shader — the fog "breathes" very slightly, reinforcing its atmospheric quality.
 
-### 5.2 — Visual Polish
+### 5.3 — Particle Atmosphere Polish *(Unchanged from rev 3)*
 
-- Deepen the VHS shader: increase `noise_amount` at high panic levels, add horizontal
-  chromatic aberration. These are already parameterised in `BodyCamVHSSettings`.
-- Add blood-pressure pulse vignette at low stamina — a `BlindPulseModifier` that rhythmically
-  tightens the blind effect at the resting heart rate, getting faster as stamina decreases.
-- Sonar pulse colour: transitions from `#00FFEE` (neutral) to `#FF4400` (near enemy) based
-  on proximity of the enemy's acoustic node.
-
-### 5.3 — Particle Atmosphere Polish
-
-- Fire preset used for braziers / flickering lights in puzzle rooms. These are static sound
-  sources (crackling fire = constant low-level sound event) that keep a small area revealed
-  on the acoustic graph permanently.
-- `smoke_puff` emitter attached to player camera at low opacity — simulates breathing condensation
-  in the cold environment.
-- Explosion preset used for destructible barrels when high-velocity items hit them, generating
-  a massive one-time sound event that reveals the whole room briefly.
-
-### 5.4 — Accessibility
-
-- Add a `contrastMode` in config: replaces fog-black with dark purple/indigo, and sonar cyan
-  with bright yellow. Helps players who struggle distinguishing the default very-dark palette.
-- Optional: "Sonar sound" toggle — plays a soft ping audio cue when a bounce node is activated,
-  making the game more playable without constant mic use.
+### 5.4 — Accessibility *(Unchanged from rev 3)*
 
 ---
 
 ## 8. Phase 6 — Playtesting, QA & Release Prep
 
-**Timeline estimate:** 2–3 weeks.
-
-### 6.1 — Internal Playtest Goals
-- Can a new player navigate the first room using only acoustic sonar within 5 minutes?
-- Does the enemy feel threatening without feeling unfair?
-- Does stamina limit feel punishing or like smart resource management?
-
-### 6.2 — Performance Targets
-| Metric | Target |
-|---|---|
-| Frame time | < 16ms (60 FPS) on Intel integrated GPU |
-| Dijkstra propagation latency | < 2ms per event on 100-node graph |
-| Peak particle count | < 2000 instances |
-| Physics substeps per frame | 2 at 60 FPS (Bullet default) |
-
-### 6.3 — Known Performance Risks
-- `ParticleEmitter` rebuilds VBO every frame for dynamic particles. Profile with RenderDoc;
-  if the VBO upload dominates, switch to a persistent mapped buffer.
-- `AcousticBounce3DVisualizer` raycasts on every propagation event. With a large graph and
-  many events, this can spike. Profile and add a frame-rate budget limiter.
-
-### 6.4 — Build Pipeline
-- `lwjgl3/build.gradle` already has a fat-jar task. Add a Gradle `package` task that:
-  1. Runs unit tests.
-  2. Builds the fat jar.
-  3. Copies assets to a `dist/` folder.
-  4. Zips into `Resonance-v{version}.zip`.
-- Use semantic versioning: `Major.Minor.Patch`. Current: `0.1.0-alpha`.
+*(Unchanged from rev 3.)*
 
 ---
 
 ## 9. Cross-Cutting Concerns
 
-### Memory Management
-libGDX + Bullet requires explicit disposal. Every `Disposable` (shaders, meshes, Bullet bodies,
-particle managers) must be disposed in `hide()` or `dispose()`. Add a `DisposalRegistry` utility:
-
-```java
-public final class DisposalRegistry implements Disposable {
-    private final Array<Disposable> items = new Array<>();
-    public <T extends Disposable> T register(T d) { items.add(d); return d; }
-    @Override public void dispose() { for (Disposable d : items) d.dispose(); }
-}
-```
-
-Register every disposable through it in `UniversalTestScene.show()`. Call
-`disposalRegistry.dispose()` in `UniversalTestScene.dispose()`.
-
-### Threading
-All libGDX OpenGL calls must happen on the render thread. `RealtimeMicSystem` already runs
-audio capture on a background thread and pushes frames to a queue — this is correct. Do not
-move Bullet or particle updates off the main thread without careful synchronisation.
-
-### Coding Standards
-The project has `CODING_STANDARDS.md`. Key rules that matter for ongoing work:
-- No static mutable state (enforced by Checkstyle).
-- All `public` methods must have Javadoc.
-- Unit tests for every non-trivial algorithm (graph, pathfinding, K-Means).
-- `final` on all local variables and fields where possible.
-
-### Config-Driven Everything
-Tunable constants must live in JSON configs, not as `private static final float` in code.
-Use the existing `BalancingConfigStore` pattern for any new tunable. This allows balance
-tweaks during playtesting without recompilation.
+*(Unchanged from rev 3. Note: `SoundPulseShaderRenderer` and icosphere mesh must be registered in `DisposalRegistry`.)*
 
 ---
 
 ## 10. Suggestions
 
-### 10.1 — Haptic Feedback (if targeting controller)
-The `PlayerFootstepSoundEmitter` already knows step timing. Map footsteps to controller
-rumble via `com.badlogic.gdx.controllers.Controller.startVibration()`. Walking: short, soft.
-Running: sharper. Enemy proximity: continuous low rumble. This deepens immersion significantly
-at near-zero implementation cost.
+*(All previous suggestions from rev 3 retained.)*
 
-### 10.2 — Sound as Light: Coloured Sonar Tiers
-With the LiDAR-range pulse now reaching `18–22 m`, colour-coding by intensity tier adds
-spatial depth information — close walls glow brighter than distant ones:
-- Low intensity (far from source): deep blue `#001155`
-- Mid intensity: cyan `#00AACC`
-- High intensity (close to source): bright white `#EEFFFF`
-Implement by mapping `SonarRevealView.intensity` to an interpolated colour in the node-flash
-rendering code in `GraphRenderLayer`.
+### 10.8 — Transmission as Puzzle Mechanic
 
-### 10.3 — Acoustic Graph as Puzzle Hint
-When the player is stuck, make the acoustic graph itself a map. A special "pulse flare" item
-(single use, found in a drawer) fires a high-intensity event from the player that illuminates
-the full graph for 10 seconds, fading out. Players can plan routes using this information.
-This fits the lore ("experimental sound equipment") and teaches the mechanic elegantly.
+Glass walls are acoustically translucent (35%). If the player needs to make a sound event reach a far room, they can choose a path through a glass partition instead of a thick concrete wall. The acoustic graph makes this mechanically real — the shorter glass path through the wall has lower total weight than the longer corridor path around it. Players can discover this by reading the sonar reveal pattern.
 
-### 10.4 — Consider Removing the Server Module
-The `server` module currently contains only `ServerLauncher.java` with no implementation.
-Unless a multiplayer or headless director mode is planned, remove it or mark it as
-`// future: multiplayer` to reduce build times and confusion.
+### 10.9 — Fog Zone as Narrative Beat
 
-### 10.5 — Particle Preset: Breath Condensation
-A very subtle, slow `mist` emitter attached to the camera (not the world) that emits 1–2
-tiny white particles per second forward. At close range (< 0.5m) they are visible as wisps.
-This is essentially free GPU-wise but adds enormous atmospheric presence.
-
-### 10.6 — Blind Effect: "Echo of Light" Design Principle
-The current `BlindEffectController` reveals geometry when sound propagates through a node.
-Consider adding a secondary reveal mode: **proximity reveal** — within 0.5m of a wall, the
-player can _feel_ it (haptic) and see a faint outline. This prevents soft-locking (player
-in a corner with no items and no mic) and mirrors real human spatial awareness.
-
-### 10.7 — Milestone Demo Scope
-If a demo milestone is needed (e.g., for a presentation), the minimal vertical slice is:
-- Hub room + Puzzle Room A + one corridor.
-- Mic-triggered sonar working.
-- One enemy that reacts to sound.
-- Stamina and basic HUD.
-This is achievable after Phase 2 + Phase 3.1–3.2 and before procedural generation.
+Now that fog has a crisp visible edge (Fix Q), the Director AI can manipulate `visibilityMeters` as a narrative tool: before a scripted scare, briefly reduce visibility to 1.5m (fog closes in); immediately after, expand it to 8m (the room is revealed, tension releases). This two-beat structure is a classic horror pacing technique made mechanically concrete.
 
 ---
 
-*End of RESONANCE Master Development Plan*
+*End of RESONANCE Master Development Plan — Rev 4*
 *Maintain this document as a living reference — update phase status as work completes.*

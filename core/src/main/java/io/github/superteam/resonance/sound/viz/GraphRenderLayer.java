@@ -42,6 +42,9 @@ public final class GraphRenderLayer {
             }
 
             int bounceDepth = resolveBounceDepth(Math.min(fromDistance, toDistance));
+            if (bounceDepth > config.maxBounceDepth) {
+                continue;
+            }
             GraphNode fromNode = acousticGraphEngine.requireNode(edge.fromNodeId());
             GraphNode toNode = acousticGraphEngine.requireNode(edge.toNodeId());
             Color color = colorForBounceDepth(bounceDepth);

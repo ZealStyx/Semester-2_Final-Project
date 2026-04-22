@@ -103,9 +103,33 @@ public record GraphEdge(
         );
     }
 
+    public static GraphEdge throughTransmission(
+        GraphNode fromNode,
+        GraphNode toNode,
+        AcousticMaterial material,
+        float thickness,
+        float occlusionPenalty,
+        float hallwayPenalty
+    ) {
+        Objects.requireNonNull(fromNode, "Source node must not be null.");
+        Objects.requireNonNull(toNode, "Target node must not be null.");
+        Vector3 fromPosition = fromNode.position();
+        Vector3 toPosition = toNode.position();
+        return new GraphEdge(
+            fromNode.id(),
+            toNode.id(),
+            fromPosition.dst(toPosition),
+            material,
+            thickness,
+            occlusionPenalty,
+            hallwayPenalty,
+            EdgeType.TRANSMISSION
+        );
+    }
+
     public float weight() {
         float baseWeight = (distance * material.traversalMultiplier()) + occlusionPenalty + hallwayPenalty;
-        if (edgeType == EdgeType.WALL || edgeType == EdgeType.DOOR_CLOSED) {
+        if (edgeType == EdgeType.WALL || edgeType == EdgeType.DOOR_CLOSED || edgeType == EdgeType.TRANSMISSION) {
             float thicknessPenalty = thickness * WALL_THICKNESS_PENALTY_PER_METER;
             float transmissionPenalty = (1f - material.transmissionCoefficient()) * TRANSMISSION_RESISTANCE_SCALE;
             return baseWeight + thicknessPenalty + transmissionPenalty;

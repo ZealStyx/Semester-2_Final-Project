@@ -16,9 +16,9 @@ public final class PlayerFootstepSoundEmitter {
     private static final float CROUCH_INTERVAL_SECONDS = 1.10f;
 
     private static final float RUN_INTENSITY = 0.60f;
-    private static final float WALK_INTENSITY = 0.30f;
-    private static final float SLOW_WALK_INTENSITY = 0.10f;
-    private static final float CROUCH_INTENSITY = 0.05f;
+    private static final float WALK_INTENSITY = 0.38f;
+    private static final float SLOW_WALK_INTENSITY = 0.16f;
+    private static final float CROUCH_INTENSITY = 0.06f;
 
     @FunctionalInterface
     public interface NodeIdResolver {

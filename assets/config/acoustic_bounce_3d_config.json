@@ -5,10 +5,19 @@
     "fade_out_seconds": 2.0
   },
   "geometric_layer": {
+    "render_rays": true,
     "ray_count": 36,
     "ray_max_distance_meters": 30.0,
     "bounce_marker_scale": 0.3,
     "fade_out_seconds": 3.0
+  },
+  "transmission": {
+    "enabled": true,
+    "max_transmission_weight": 25.0,
+    "show_transmitted_pulse": true,
+    "transmitted_pulse_color_r": 0.55,
+    "transmitted_pulse_color_g": 0.7,
+    "transmitted_pulse_color_b": 1.0
   },
   "microphone": {
     "input_enabled": true,
