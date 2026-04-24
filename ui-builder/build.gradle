@@ -1,7 +1,9 @@
-// gradle.properties
-enableUiBuilder=true
+[compileJava]*.options*.encoding = 'UTF-8'
+eclipse.project.name = appName + '-ui-builder'
+java.sourceCompatibility = 17
+java.targetCompatibility = 17
 
-// lwjgl3/build.gradle
-if (enableUiBuilder == 'true') {
-    implementation project(':ui-builder')
+dependencies {
+    implementation project(':core')
+    // Swing is part of the JDK — no extra dependency needed
 }

@@ -44,6 +44,10 @@ dependencies {
       implementation "io.github.berstanio:gdx-svmhelper-extension-freetype:$graalHelperVersion"
 
     }
+  // lwjgl3/build.gradle
+  if (enableUiBuilder == 'true') {
+      implementation project(':ui-builder')
+  }
 }
 
 def os = System.properties['os.name'].toLowerCase(Locale.ROOT)
