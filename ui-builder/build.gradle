@@ -1,0 +1,7 @@
+// gradle.properties
+enableUiBuilder=true
+
+// lwjgl3/build.gradle
+if (enableUiBuilder == 'true') {
+    implementation project(':ui-builder')
+}
