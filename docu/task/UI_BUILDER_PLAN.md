@@ -4,6 +4,7 @@
 **LibGDX version:** 1.14.0  
 **Java target:** 17  
 **Backend:** LWJGL3  
+**Assignees:** 2 members (Member A and Member B — split defined below)
 
 ---
 
@@ -66,16 +67,294 @@ The queue is the only shared state between the two threads. No locks are held on
 
 ---
 
+## ⚠️ Using the UI Builder from `core/screen/MainMenuScreen.java`
+
+### The circular dependency problem
+
+`ui-builder` depends on `core`, so **`core` cannot import anything from `ui-builder`**. If `MainMenuScreen.java` tried to do this:
+
+```java
+// ❌ This will NOT compile — circular dependency
+import io.github.superteam.resonance.uibuilder.runtime.UiBuilderIntegration;
+```
+
+the build will fail. `core` does not know `ui-builder` exists.
+
+### The solution — `UiRegistrar` interface (defined in `core`)
+
+The fix is a **dependency inversion**: define a tiny interface in `core` that `MainMenuScreen` can use without knowing anything about `ui-builder`. The `lwjgl3` launcher (which can see both modules) creates the real implementation and injects it into the screen.
+
+---
+
+### Step 1 — Create the interface in `core`
+
+```
+core/src/main/java/io/github/superteam/resonance/ui/UiRegistrar.java
+```
+
+```java
+package io.github.superteam.resonance.ui;
+
+import com.badlogic.gdx.scenes.scene2d.Actor;
+
+/**
+ * Thin interface so core screens can register their actors with the
+ * UI Builder without depending on the ui-builder module directly.
+ *
+ * In release builds, pass a no-op implementation.
+ * In dev builds, pass the real UiRegistry-backed implementation from lwjgl3.
+ */
+public interface UiRegistrar {
+
+    /** Register an actor so it appears in the UI Builder editor panel. */
+    void register(String id, String displayName, Actor actor);
+
+    /** Unregister all actors registered by this screen (call from hide() or dispose()). */
+    void unregisterAll();
+
+    /** A do-nothing implementation safe to use in release builds or tests. */
+    UiRegistrar NOOP = new UiRegistrar() {
+        @Override public void register(String id, String displayName, Actor actor) {}
+        @Override public void unregisterAll() {}
+    };
+}
+```
+
+---
+
+### Step 2 — Use it in `MainMenuScreen.java`
+
+```java
+package io.github.superteam.resonance.core.screen;
+
+import com.badlogic.gdx.Screen;
+import com.badlogic.gdx.scenes.scene2d.Stage;
+import com.badlogic.gdx.scenes.scene2d.ui.Image;
+import com.badlogic.gdx.scenes.scene2d.ui.TextButton;
+import io.github.superteam.resonance.ui.UiRegistrar;
+
+public class MainMenuScreen implements Screen {
+
+    private final Stage stage;
+    private final UiRegistrar uiRegistrar;  // injected — never null
+
+    private Image logo;
+    private TextButton playButton;
+    private TextButton settingsButton;
+
+    /** Production constructor — no UI builder. */
+    public MainMenuScreen(Stage stage) {
+        this(stage, UiRegistrar.NOOP);
+    }
+
+    /** Dev constructor — receives the live registrar from the lwjgl3 launcher. */
+    public MainMenuScreen(Stage stage, UiRegistrar uiRegistrar) {
+        this.stage = stage;
+        this.uiRegistrar = uiRegistrar;
+    }
+
+    @Override
+    public void show() {
+        // --- Build your actors normally ---
+        logo           = new Image(/* your logo drawable */);
+        playButton     = new TextButton("Play",     /* skin */);
+        settingsButton = new TextButton("Settings", /* skin */);
+
+        logo.setPosition(200, 400);
+        playButton.setPosition(200, 250);
+        settingsButton.setPosition(200, 150);
+
+        stage.addActor(logo);
+        stage.addActor(playButton);
+        stage.addActor(settingsButton);
+
+        // --- Register with the UI Builder (no-op in release builds) ---
+        uiRegistrar.register("mainmenu.logo",           "Logo",            logo);
+        uiRegistrar.register("mainmenu.playButton",     "Play Button",     playButton);
+        uiRegistrar.register("mainmenu.settingsButton", "Settings Button", settingsButton);
+    }
+
+    @Override
+    public void render(float delta) {
+        // UiBridge.applyPending() is called by the launcher — not here
+        stage.act(delta);
+        stage.draw();
+    }
+
+    @Override
+    public void hide() {
+        uiRegistrar.unregisterAll(); // clean up when leaving this screen
+    }
+
+    @Override public void resize(int w, int h) { stage.getViewport().update(w, h, true); }
+    @Override public void pause()  {}
+    @Override public void resume() {}
+    @Override public void dispose() { stage.dispose(); }
+}
+```
+
+---
+
+### Step 3 — Create the real `UiRegistrar` implementation in `ui-builder`
+
+```
+ui-builder/src/main/java/io/github/superteam/resonance/uibuilder/runtime/LiveUiRegistrar.java
+```
+
+```java
+package io.github.superteam.resonance.uibuilder.runtime;
+
+import com.badlogic.gdx.scenes.scene2d.Actor;
+import io.github.superteam.resonance.ui.UiRegistrar;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Real UiRegistrar implementation — lives in ui-builder, not in core.
+ * Delegates to UiRegistry and tracks which IDs were registered so
+ * unregisterAll() can clean them up when the screen hides.
+ */
+public final class LiveUiRegistrar implements UiRegistrar {
+
+    private final UiRegistry registry;
+    private final List<String> registeredIds = new ArrayList<>();
+
+    public LiveUiRegistrar(UiRegistry registry) {
+        this.registry = registry;
+    }
+
+    @Override
+    public void register(String id, String displayName, Actor actor) {
+        registry.register(new UiComponent(id, displayName, actor));
+        registeredIds.add(id);
+    }
+
+    @Override
+    public void unregisterAll() {
+        registeredIds.forEach(registry::unregister);
+        registeredIds.clear();
+    }
+}
+```
+
+---
+
+### Step 4 — Wire it all together in the `lwjgl3` launcher
+
+This is the only place that can see both `core` and `ui-builder`. It creates a `LiveUiRegistrar`, gives it to the screen, and runs the per-frame bridge.
+
+```java
+package io.github.superteam.resonance.lwjgl3;
+
+import com.badlogic.gdx.Game;
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.scenes.scene2d.Stage;
+import io.github.superteam.resonance.core.screen.MainMenuScreen;
+import io.github.superteam.resonance.uibuilder.runtime.*;
+
+public class ResonanceGame extends Game {
+
+    private UiBridge uiBridge;
+
+    @Override
+    public void create() {
+        Stage stage = new Stage();
+
+        // --- Dev-only UI Builder setup ---
+        UiRegistry registry = UiRegistry.get();
+        LiveUiRegistrar registrar = new LiveUiRegistrar(registry);
+        uiBridge = UiBuilderIntegration.start(); // opens the Swing editor window
+
+        // Pass the registrar into the screen
+        setScreen(new MainMenuScreen(stage, registrar));
+    }
+
+    @Override
+    public void render() {
+        // Apply any pending UI Builder changes before drawing
+        if (uiBridge != null) uiBridge.applyPending();
+        super.render(); // delegates to current screen's render()
+    }
+
+    @Override
+    public void dispose() {
+        UiBuilderIntegration.stop();
+        super.dispose();
+    }
+}
+```
+
+---
+
+### How it all fits together — data flow diagram
+
+```
+lwjgl3 / ResonanceGame.create()
+    │
+    ├─ creates LiveUiRegistrar (knows about ui-builder)
+    ├─ calls UiBuilderIntegration.start()  →  opens Swing editor window
+    └─ passes registrar into MainMenuScreen(stage, registrar)
+                │
+                └─ MainMenuScreen.show()
+                        │  creates logo, playButton, settingsButton
+                        └─ uiRegistrar.register("mainmenu.logo", ...)
+                                │
+                                └─ LiveUiRegistrar.register()
+                                        └─ UiRegistry.register(UiComponent)
+                                                │
+                                                ▼
+                                     [appears in Swing editor list]
+                                                │
+                                    designer moves a slider
+                                                │
+                                     PropertyUpdate → ConcurrentLinkedQueue
+                                                │
+                              next frame: ResonanceGame.render()
+                                                │
+                                     uiBridge.applyPending()
+                                                │
+                                     actor.setX() / setY() / etc.
+                                                │
+                                     [actor moves in game instantly]
+```
+
+---
+
+### Switching screens cleanly
+
+When the player moves from `MainMenuScreen` to e.g. `GameScreen`, the old actors must be unregistered so the editor list stays accurate:
+
+```
+MainMenuScreen.hide()
+    └─ uiRegistrar.unregisterAll()
+            └─ UiRegistry.unregister("mainmenu.logo")
+            └─ UiRegistry.unregister("mainmenu.playButton")
+            └─ UiRegistry.unregister("mainmenu.settingsButton")
+```
+
+Each screen that wants UI Builder support gets its own `LiveUiRegistrar` instance (or shares one per-screen). The launcher creates and passes it in — the screen itself stays ignorant of `ui-builder`.
+
+---
+
+### Release builds — zero overhead
+
+When `enableUiBuilder=false` in `gradle.properties`, the `ui-builder` module is not on the classpath at all. The launcher uses the no-arg `MainMenuScreen(stage)` constructor, which defaults to `UiRegistrar.NOOP`. Every `uiRegistrar.register(...)` call is a one-line no-op — the JIT will inline and eliminate it entirely.
+
+---
+
 ## Member A — Runtime Bridge (in-game side)
 
 ### Deliverables
 
 | Class | Package | Purpose |
 |-------|---------|---------|
+| `UiRegistrar` *(interface)* | `core` → `ui` | Thin interface so core screens can register actors |
 | `UiComponent` | `uibuilder.runtime` | Wraps a Scene2D `Actor` and its metadata |
 | `UiRegistry` | `uibuilder.runtime` | Singleton that holds all registered components |
 | `PropertyUpdate` | `uibuilder.runtime` | Value-object: component id + property name + new value |
 | `UiBridge` | `uibuilder.runtime` | Polls the update queue each frame, applies changes |
+| `LiveUiRegistrar` | `uibuilder.runtime` | Implements `UiRegistrar` using the real `UiRegistry` |
 | `UiBuilderIntegration` | `uibuilder.runtime` | One-call setup: creates the Swing window, wires everything |
 
 ---
@@ -88,7 +367,7 @@ package io.github.superteam.resonance.uibuilder.runtime;
 import com.badlogic.gdx.scenes.scene2d.Actor;
 
 public final class UiComponent {
-    public final String id;          // unique, e.g. "hud.healthBar"
+    public final String id;          // unique, e.g. "mainmenu.playButton"
     public final String displayName; // human label in editor
     public final Actor actor;        // live Scene2D actor
 
@@ -179,7 +458,7 @@ public final class PropertyUpdate {
 
 ### `UiBridge.java`
 
-Call `UiBridge.applyPending()` once per frame from inside your game's `render()` loop (on the game thread only).
+Call `UiBridge.applyPending()` once per frame from inside the `lwjgl3` game's `render()` loop (on the game thread only).
 
 ```java
 package io.github.superteam.resonance.uibuilder.runtime;
@@ -227,8 +506,6 @@ public final class UiBridge {
 
 ### `UiBuilderIntegration.java`
 
-This is the entry point the game calls to enable the editor. It should be called once, early in the game's `create()` or scene `show()` method.
-
 ```java
 package io.github.superteam.resonance.uibuilder.runtime;
 
@@ -238,7 +515,7 @@ public final class UiBuilderIntegration {
     private static boolean started = false;
 
     /**
-     * Call once on the game thread (e.g. in create() or show()).
+     * Call once on the game thread (e.g. in create()).
      * Launches the Swing editor window on its own thread.
      */
     public static UiBridge start() {
@@ -250,7 +527,6 @@ public final class UiBuilderIntegration {
 
         // Launch Swing on the EDT — never on the game thread
         javax.swing.SwingUtilities.invokeLater(() -> {
-            // Member B implements EditorPanel
             io.github.superteam.resonance.uibuilder.editor.EditorPanel panel =
                 new io.github.superteam.resonance.uibuilder.editor.EditorPanel(registry);
             panel.show();
@@ -269,44 +545,15 @@ public final class UiBuilderIntegration {
 
 ---
 
-### How to wire it into the game
-
-In `UniversalTestScene.java` (or wherever Scene2D actors are created), add at the end of the constructor or `show()`:
-
-```java
-// --- UI BUILDER (dev only) ---
-import io.github.superteam.resonance.uibuilder.runtime.*;
-
-// After creating actors, register them:
-UiRegistry reg = UiRegistry.get();
-reg.register(new UiComponent("hud.healthBar", "Health Bar", healthBarActor));
-reg.register(new UiComponent("hud.staminaBar", "Stamina Bar", staminaBarActor));
-// ...add as many as needed
-
-uiBridge = UiBuilderIntegration.start(); // store reference in scene field
-```
-
-Then in `render()`, before drawing:
-
-```java
-if (uiBridge != null) uiBridge.applyPending();
-```
-
-And in `dispose()`:
-
-```java
-UiBuilderIntegration.stop();
-```
-
----
-
 ### Member A — Acceptance Criteria
 
+- [ ] `UiRegistrar` interface created in `core` under package `ui`
+- [ ] `LiveUiRegistrar` created in `ui-builder`, implements `UiRegistrar`, delegates to `UiRegistry`
 - [ ] `UiRegistry.register()` and `UiRegistry.all()` work correctly
 - [ ] `UiBridge.applyPending()` drains the queue and applies all `PropertyUpdate` types to a live actor without throwing on the game thread
 - [ ] No synchronization primitives other than `ConcurrentLinkedQueue` are used
 - [ ] `UiBuilderIntegration.start()` launches the Swing window without blocking the game thread
-- [ ] Tested manually: register a dummy actor, push a `PropertyUpdate` onto the queue from a test, verify the actor's property changes on the next `applyPending()` call
+- [ ] Tested manually: register a dummy actor via `LiveUiRegistrar`, push a `PropertyUpdate` onto the queue, verify the actor's property changes on the next `applyPending()` call
 
 ---
 
@@ -404,8 +651,6 @@ public final class EditorPanel {
 
 ### `ComponentListPanel.java`
 
-Displays a `JList` of all registered component display names. Calls back with the component ID when one is selected. Has a `refresh()` method that repopulates the list from `UiRegistry.all()` without clearing the selection if the same item is still present.
-
 ```java
 package io.github.superteam.resonance.uibuilder.editor;
 
@@ -422,7 +667,6 @@ public final class ComponentListPanel extends JPanel {
     private final Consumer<String> onSelect;
     private final DefaultListModel<String> listModel = new DefaultListModel<>();
     private final JList<String> jList = new JList<>(listModel);
-    // Maps display index → component id
     private final java.util.List<String> idOrder = new java.util.ArrayList<>();
 
     public ComponentListPanel(UiRegistry registry, Consumer<String> onSelect) {
@@ -467,27 +711,6 @@ public final class ComponentListPanel extends JPanel {
 
 ### `PropertySheetPanel.java`
 
-This is the main work. When a component is selected, read the actor's current property values and populate a panel of controls. Each control, on change, pushes a `PropertyUpdate` to `UiRegistry.pendingUpdates`.
-
-Structure the panel as a `GridBagLayout` or `GroupLayout` with labelled rows:
-
-```
-Label       Control
-─────────   ──────────────────────────────────
-X           [slider -2000 to 2000] [spinner]
-Y           [slider -2000 to 2000] [spinner]
-Width       [slider 0 to 2000]    [spinner]
-Height      [slider 0 to 2000]    [spinner]
-Scale X     [slider 0.0 to 5.0]   [spinner]
-Scale Y     [slider 0.0 to 5.0]   [spinner]
-Rotation    [slider -360 to 360]  [spinner]
-Alpha       [slider 0.0 to 1.0]   [spinner]
-Color       [R slider] [G slider] [B slider]
-Visible     [checkbox]
-```
-
-**Important implementation detail:** sliders and spinners must stay in sync with each other. Use a shared `ChangeListener` that updates both controls when either fires. Gate the update so that programmatic changes to one don't cause the other to fire a second `PropertyUpdate`.
-
 ```java
 package io.github.superteam.resonance.uibuilder.editor;
 
@@ -502,7 +725,7 @@ public final class PropertySheetPanel extends JPanel {
 
     private final UiRegistry registry;
     private String currentId;
-    private boolean updating = false; // guard flag: stops listener re-entrancy
+    private boolean updating = false;
 
     public PropertySheetPanel(UiRegistry registry) {
         this.registry = registry;
@@ -627,10 +850,6 @@ public final class PropertySheetPanel extends JPanel {
 
 ### `LayoutSerializer.java`
 
-Saves the current actor state for all registered components to a JSON file, and loads it back by pushing `PropertyUpdate` records onto the queue.
-
-Use only `java.util` — no external JSON libraries. Write minimal hand-rolled JSON since the schema is flat.
-
 ```java
 package io.github.superteam.resonance.uibuilder.editor;
 
@@ -676,11 +895,8 @@ public final class LayoutSerializer {
     }
 
     public static void load(UiRegistry registry, File file) {
-        // Minimal JSON parse — reads key:value pairs per component block
         try {
             String json = Files.readString(file.toPath());
-            // Split by component blocks: find "id": { ... }
-            // Simple line-by-line parser — assumes the format written by save()
             String currentId = null;
             Map<String, Float> props = new LinkedHashMap<>();
 
@@ -699,7 +915,6 @@ public final class LayoutSerializer {
                     try {
                         props.put(key, Float.parseFloat(val));
                     } catch (NumberFormatException ignored) {
-                        // boolean
                         props.put(key, "true".equals(val) ? 1f : 0f);
                     }
                 }
@@ -785,9 +1000,9 @@ include 'ui-builder'
 
 1. Run the game normally via `./gradlew lwjgl3:run`
 2. The editor window opens automatically alongside the game window
-3. Click a component in the left list
+3. Click a component in the left list (e.g. "Play Button", "Logo")
 4. Adjust any property — the game updates in real time with no restart
-5. When happy with the layout, click **Save Layout** and save as e.g. `hud_layout.json`
+5. When happy with the layout, click **Save Layout** and save as e.g. `mainmenu_layout.json`
 6. The saved JSON can be committed to the repo; the game can optionally load it at startup via `LayoutSerializer.load()`
 
 ---
@@ -805,13 +1020,15 @@ include 'ui-builder'
 ## File Checklist
 
 **Member A creates:**
+- [ ] `core/src/.../ui/UiRegistrar.java` ← **new interface, lives in core**
 - [ ] `ui-builder/build.gradle`
 - [ ] `UiComponent.java`
 - [ ] `UiRegistry.java`
 - [ ] `PropertyUpdate.java`
 - [ ] `UiBridge.java`
+- [ ] `LiveUiRegistrar.java` ← **new, implements UiRegistrar**
 - [ ] `UiBuilderIntegration.java`
-- [ ] Wire into `UniversalTestScene.java` (register actors, call `start()`, call `applyPending()`)
+- [ ] Wire into `lwjgl3` launcher (`ResonanceGame.java`): create `LiveUiRegistrar`, pass to screen, call `start()`, call `applyPending()` in render
 - [ ] Update `settings.gradle`
 - [ ] Update `gradle.properties` with `enableUiBuilder=true`
 - [ ] Update `lwjgl3/build.gradle` with conditional dependency
@@ -823,7 +1040,14 @@ include 'ui-builder'
 - [ ] `LayoutSerializer.java`
 - [ ] (Optional) `ColorPickerField.java` — consolidated R/G/B with a colour preview swatch
 
+**Screen authors (any screen that wants UI Builder support):**
+- [ ] Accept `UiRegistrar` in constructor (default to `UiRegistrar.NOOP`)
+- [ ] Call `uiRegistrar.register(...)` for each actor in `show()`
+- [ ] Call `uiRegistrar.unregisterAll()` in `hide()`
+
 **Integration test (both members):**
 - [ ] Run game, confirm editor window appears
+- [ ] `MainMenuScreen` actors appear in the component list by name
 - [ ] Move a slider, confirm actor moves in game immediately
+- [ ] Switch screens, confirm old actors disappear from the list
 - [ ] Save layout, reload layout, confirm properties restore correctly
