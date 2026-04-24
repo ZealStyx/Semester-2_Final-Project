@@ -41,6 +41,7 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.GdxRuntimeException;
 import com.badlogic.gdx.utils.ObjectMap;
+import com.badlogic.gdx.utils.TimeUtils;
 import io.github.superteam.resonance.director.DirectorController;
 import io.github.superteam.resonance.devTest.PlayerTestScreen;
 import io.github.superteam.resonance.devTest.universal.diagnostics.DiagnosticOverlay;
@@ -93,16 +94,50 @@ import io.github.superteam.resonance.sound.SoundEvent;
 import io.github.superteam.resonance.sound.SoundEventData;
 import io.github.superteam.resonance.sound.SoundPropagationOrchestrator;
 import io.github.superteam.resonance.sound.SpatialCueController;
+import io.github.superteam.resonance.multiplayer.MultiplayerManager;
+import io.github.superteam.resonance.multiplayer.MultiplayerLaunchConfig;
+import io.github.superteam.resonance.multiplayer.RemotePlayer;
+import io.github.superteam.resonance.multiplayer.VoiceCaptureSystem;
+import io.github.superteam.resonance.multiplayer.VoicePlaybackSystem;
+import io.github.superteam.resonance.multiplayer.packets.Packets;
+import io.github.superteam.resonance.multiplayer.packets.Packets.VoiceChunkPacket;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 /**
- * High-fidelity universal test environment with rendering, physics, sound, and item systems.
+ * High-fidelity universal test environment with rendering, physics, sound, and
+ * item systems.
  */
 public final class UniversalTestScene extends ScreenAdapter {
     private static final float HUB_X = 40.0f;
     private static final float HUB_Z = 40.0f;
+    
+    private MultiplayerLaunchConfig launchConfig = null;
+    private boolean voiceCaptureStarted = false;
+
+    public void setLaunchConfig(MultiplayerLaunchConfig config) {
+        this.launchConfig = config;
+        if (config == null || multiplayerManager == null) {
+            return;
+        }
+
+        if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE) {
+            return;
+        }
+
+        System.out.println("Initializing with launch config: " + config);
+        if (config.role == MultiplayerLaunchConfig.Role.HOST) {
+            multiplayerManager.startHost();
+        } else if (config.role == MultiplayerLaunchConfig.Role.CLIENT) {
+            if (config.hostIp != null && !config.hostIp.isBlank()) {
+                multiplayerManager.connectAsClient(config.hostIp);
+            }
+        }
+
+        tryStartVoiceCapture();
+        this.launchConfig = null;
+    }
     private static final float FLOOR_Y = 0.02f;
     private static final float CORRIDOR_HALF_WIDTH = 1.8f;
 
@@ -213,8 +248,11 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final SimplePanicModel panicModel = new SimplePanicModel();
     private final BlindFogUniformUpdater blindFogUniformUpdater = new BlindFogUniformUpdater();
 
+    private final java.util.EnumMap<ItemType, Mesh> viewModelMeshes = new java.util.EnumMap<>(ItemType.class);
     private Mesh playerViewModelMesh;
     private Mesh fullscreenQuadMesh;
+    private ClosestRayResultCallback cachedRayCallback;
+    private io.github.superteam.resonance.particles.ParticleEffect mistEffect;
 
     private btCollisionConfiguration physicsCollisionConfiguration;
     private btCollisionDispatcher physicsCollisionDispatcher;
@@ -254,9 +292,21 @@ public final class UniversalTestScene extends ScreenAdapter {
     private boolean breathingApplied;
     private String lastItemDestroyedMessage;
     private String cachedNearestNodeId = "center";
+    private MultiplayerManager multiplayerManager;
+    private VoiceCaptureSystem voiceCapture;
+    private VoicePlaybackSystem voicePlayback;
+    private boolean voiceCaptureStartBlocked = false;
+    private short localPlayerId_forVoice;
+    private float positionBroadcastTimer;
+    private long lastVoicePlaybackMillis;
+    private final Array<JoinBanner> joinBanners = new Array<>();
+    private long lastMicStartAttemptMillis;
+    private static final long MIC_START_RETRY_COOLDOWN_MS = 5000L;
+    private static final long VOICE_OUTPUT_RECENT_WINDOW_MS = 140L;
 
     public UniversalTestScene() {
-        camera = new PerspectiveCamera(BASE_FOV, Math.max(1, Gdx.graphics.getWidth()), Math.max(1, Gdx.graphics.getHeight()));
+        camera = new PerspectiveCamera(BASE_FOV, Math.max(1, Gdx.graphics.getWidth()),
+                Math.max(1, Gdx.graphics.getHeight()));
         camera.position.set(HUB_X, EYE_HEIGHT, HUB_Z);
         camera.lookAt(HUB_X + 1.0f, EYE_HEIGHT, HUB_Z);
         camera.near = 0.05f;
@@ -274,18 +324,18 @@ public final class UniversalTestScene extends ScreenAdapter {
         loadWorldShader();
         loadPlayerShader();
         loadParticleShader();
-        bodyCamShaderLoader = new BodyCamVHSShaderLoader("shaders/vert/body_cam_vhs.vert", "shaders/frag/body_cam_vhs.frag");
+        bodyCamShaderLoader = new BodyCamVHSShaderLoader("shaders/vert/body_cam_vhs.vert",
+                "shaders/frag/body_cam_vhs.frag");
         bodyCamFrameBuffer = new BodyCamPassFrameBuffer();
         bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
         blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
         blindEffectController = new BlindEffectController(blindEffectConfig, panicModel);
         fullscreenQuadMesh = createFullscreenQuadMesh();
         bodyCamVisualizer = new BodyCamVHSVisualizer(
-            bodyCamFrameBuffer,
-            bodyCamShaderLoader.shader(),
-            fullscreenQuadMesh,
-            new BodyCamVHSAnimator()
-        );
+                bodyCamFrameBuffer,
+                bodyCamShaderLoader.shader(),
+                fullscreenQuadMesh,
+                new BodyCamVHSAnimator());
         directorController = new DirectorController();
 
         buildParticleSystems();
@@ -296,6 +346,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         registerZoneColliders();
         playerController.setWorldColliders(worldColliders);
         playerViewModelMesh = createCubeMesh(1.0f, 1.0f, 1.0f);
+        buildViewModelMeshes();
 
         initializePhysicsWorld();
         registerStaticWorldBodies();
@@ -309,16 +360,16 @@ public final class UniversalTestScene extends ScreenAdapter {
             cachedSoundPropagationZone.setNodePositions(graphNodePositions);
         }
         acousticBounceConfig = AcousticBounceConfigStore.loadOrDefault("config/acoustic_bounce_3d_config.json");
-        acousticBounce3DVisualizer = new AcousticBounce3DVisualizer(acousticGraphEngine, worldColliders, acousticBounceConfig);
+        acousticBounce3DVisualizer = new AcousticBounce3DVisualizer(acousticGraphEngine, worldColliders,
+                acousticBounceConfig);
 
         spatialCueController = new SpatialCueController();
         soundPropagationOrchestrator = new SoundPropagationOrchestrator(
-            acousticGraphEngine,
-            new DijkstraPathfinder(),
-            new SonarRenderer(),
-            spatialCueController,
-            SoundBalancingConfigStore.loadOrDefault("config/balancing_config.json")
-        );
+                acousticGraphEngine,
+                new DijkstraPathfinder(),
+                new SonarRenderer(),
+                spatialCueController,
+                SoundBalancingConfigStore.loadOrDefault("config/balancing_config.json"));
 
         physicsNoiseEmitter = new PhysicsNoiseEmitter(soundPropagationOrchestrator);
         impactListener = new ImpactListener(physicsNoiseEmitter, this::findNearestNodeId);
@@ -334,10 +385,9 @@ public final class UniversalTestScene extends ScreenAdapter {
         soundPropagationOrchestrator.registerEnemyListener(directorController);
 
         playerFootstepSoundEmitter = new PlayerFootstepSoundEmitter(
-            playerController,
-            soundPropagationOrchestrator,
-            this::findNearestNodeId
-        );
+                playerController,
+                soundPropagationOrchestrator,
+                this::findNearestNodeId);
 
         playerFeatureExtractor = new PlayerFeatureExtractor();
         playerFeatureExtractor.setLastKnownPosition(camera.position);
@@ -358,7 +408,14 @@ public final class UniversalTestScene extends ScreenAdapter {
             @Override
             public boolean keyDown(int keycode) {
                 if (keycode == Input.Keys.ESCAPE) {
-                    Gdx.app.exit();
+                    // Return to multiplayer menu
+                    if (Gdx.app.getApplicationListener() instanceof Game game) {
+                        Screen previous = game.getScreen();
+                        game.setScreen(new MultiplayerTestMenuScreen());
+                        if (previous != null && previous != game.getScreen()) {
+                            Gdx.app.postRunnable(previous::dispose);
+                        }
+                    }
                     return true;
                 }
                 return false;
@@ -372,6 +429,59 @@ public final class UniversalTestScene extends ScreenAdapter {
         });
 
         Gdx.input.setCursorCatched(true);
+
+        multiplayerManager = new MultiplayerManager();
+        
+        // Initialize networking from launch config if available
+        if (launchConfig != null) {
+            System.out.println("Initializing with launch config: " + launchConfig);
+            if (launchConfig.role == MultiplayerLaunchConfig.Role.HOST) {
+                multiplayerManager.startHost();
+            } else if (launchConfig.role == MultiplayerLaunchConfig.Role.CLIENT) {
+                if (launchConfig.hostIp != null) {
+                    multiplayerManager.connectAsClient(launchConfig.hostIp);
+                }
+            }
+            launchConfig = null; // Clear after use
+        }
+        
+        voicePlayback = new VoicePlaybackSystem();
+        voiceCapture = new VoiceCaptureSystem(this::onLocalVoiceChunkReady);
+        tryStartVoiceCapture();
+    }
+
+    public UniversalTestScene(MultiplayerLaunchConfig config) {
+        this();
+        setLaunchConfig(config);
+    }
+
+    private void onLocalVoiceChunkReady(VoiceChunkPacket chunk) {
+        if (multiplayerManager.getRole() == MultiplayerManager.Role.HOST) {
+            multiplayerManager.broadcastVoice(chunk);
+        } else if (multiplayerManager.getRole() == MultiplayerManager.Role.CLIENT) {
+            multiplayerManager.sendVoiceToHost(chunk);
+        }
+    }
+
+    private void tryStartVoiceCapture() {
+        if (voiceCaptureStarted || voiceCaptureStartBlocked || voiceCapture == null || multiplayerManager == null) {
+            return;
+        }
+
+        if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE && multiplayerManager.hasLocalPlayerId()) {
+            if (realtimeMicSystem != null && realtimeMicSystem.isActive()) {
+                realtimeMicSystem.stop();
+                micEnabled = false;
+                Gdx.app.log("Mic", "Stopped realtime mic before multiplayer voice capture start");
+            }
+
+            if (voiceCapture.start(multiplayerManager.getLocalPlayerId())) {
+                voiceCaptureStarted = true;
+            } else {
+                voiceCaptureStartBlocked = true;
+                Gdx.app.log("Voice", "Voice capture disabled after failed microphone start");
+            }
+        }
     }
 
     private void initializeZones() {
@@ -399,16 +509,16 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
 
             for (ColliderDescriptor collider : colliders) {
-                addCollider(collider.cx(), collider.cy(), collider.cz(), collider.width(), collider.height(), collider.depth());
+                addCollider(collider.cx(), collider.cy(), collider.cz(), collider.width(), collider.height(),
+                        collider.depth());
             }
         }
     }
 
     private void loadWorldShader() {
         worldShader = new ShaderProgram(
-            Gdx.files.internal("shaders/vert/retro_shader.vert"),
-            Gdx.files.internal("shaders/frag/retro_shader.frag")
-        );
+                Gdx.files.internal("shaders/vert/retro_shader.vert"),
+                Gdx.files.internal("shaders/frag/retro_shader.frag"));
         if (!worldShader.isCompiled()) {
             throw new GdxRuntimeException("World shader failed to compile: " + worldShader.getLog());
         }
@@ -417,46 +527,43 @@ public final class UniversalTestScene extends ScreenAdapter {
     private void loadPlayerShader() {
         try {
             playerShaderProgram = new ShaderProgram(
-                Gdx.files.internal("shaders/vert/player_shader.vert"),
-                Gdx.files.internal("shaders/frag/player_shader.frag")
-            );
+                    Gdx.files.internal("shaders/vert/player_shader.vert"),
+                    Gdx.files.internal("shaders/frag/player_shader.frag"));
         } catch (Exception ignored) {
-            String vertexShader =
-                "attribute vec3 a_position;\n" +
-                "attribute vec3 a_normal;\n" +
-                "uniform mat4 u_projViewTrans;\n" +
-                "uniform mat4 u_modelTrans;\n" +
-                "varying vec3 v_worldPos;\n" +
-                "varying vec3 v_normal;\n" +
-                "void main() {\n" +
-                "  vec4 worldPos = u_modelTrans * vec4(a_position, 1.0);\n" +
-                "  v_worldPos = worldPos.xyz;\n" +
-                "  v_normal = normalize((u_modelTrans * vec4(a_normal, 0.0)).xyz);\n" +
-                "  gl_Position = u_projViewTrans * worldPos;\n" +
-                "}\n";
+            String vertexShader = "attribute vec3 a_position;\n" +
+                    "attribute vec3 a_normal;\n" +
+                    "uniform mat4 u_projViewTrans;\n" +
+                    "uniform mat4 u_modelTrans;\n" +
+                    "varying vec3 v_worldPos;\n" +
+                    "varying vec3 v_normal;\n" +
+                    "void main() {\n" +
+                    "  vec4 worldPos = u_modelTrans * vec4(a_position, 1.0);\n" +
+                    "  v_worldPos = worldPos.xyz;\n" +
+                    "  v_normal = normalize((u_modelTrans * vec4(a_normal, 0.0)).xyz);\n" +
+                    "  gl_Position = u_projViewTrans * worldPos;\n" +
+                    "}\n";
 
-            String fragmentShader =
-                "#ifdef GL_ES\n" +
-                "precision mediump float;\n" +
-                "#endif\n" +
-                "varying vec3 v_worldPos;\n" +
-                "varying vec3 v_normal;\n" +
-                "uniform vec3 u_cameraPos;\n" +
-                "uniform vec3 u_lightDirection;\n" +
-                "uniform vec3 u_baseColor;\n" +
-                "uniform vec3 u_ambientColor;\n" +
-                "uniform vec3 u_rimColor;\n" +
-                "uniform float u_rimStrength;\n" +
-                "void main() {\n" +
-                "  vec3 n = normalize(v_normal);\n" +
-                "  vec3 l = normalize(u_lightDirection);\n" +
-                "  vec3 v = normalize(u_cameraPos - v_worldPos);\n" +
-                "  float diffuse = max(dot(n, l), 0.0);\n" +
-                "  vec3 color = u_baseColor * (u_ambientColor + diffuse);\n" +
-                "  float rim = 1.0 - max(dot(n, v), 0.0);\n" +
-                "  color += pow(rim, 2.5) * u_rimColor * u_rimStrength;\n" +
-                "  gl_FragColor = vec4(color, 1.0);\n" +
-                "}\n";
+            String fragmentShader = "#ifdef GL_ES\n" +
+                    "precision mediump float;\n" +
+                    "#endif\n" +
+                    "varying vec3 v_worldPos;\n" +
+                    "varying vec3 v_normal;\n" +
+                    "uniform vec3 u_cameraPos;\n" +
+                    "uniform vec3 u_lightDirection;\n" +
+                    "uniform vec3 u_baseColor;\n" +
+                    "uniform vec3 u_ambientColor;\n" +
+                    "uniform vec3 u_rimColor;\n" +
+                    "uniform float u_rimStrength;\n" +
+                    "void main() {\n" +
+                    "  vec3 n = normalize(v_normal);\n" +
+                    "  vec3 l = normalize(u_lightDirection);\n" +
+                    "  vec3 v = normalize(u_cameraPos - v_worldPos);\n" +
+                    "  float diffuse = max(dot(n, l), 0.0);\n" +
+                    "  vec3 color = u_baseColor * (u_ambientColor + diffuse);\n" +
+                    "  float rim = 1.0 - max(dot(n, v), 0.0);\n" +
+                    "  color += pow(rim, 2.5) * u_rimColor * u_rimStrength;\n" +
+                    "  gl_FragColor = vec4(color, 1.0);\n" +
+                    "}\n";
 
             playerShaderProgram = new ShaderProgram(vertexShader, fragmentShader);
         }
@@ -469,9 +576,8 @@ public final class UniversalTestScene extends ScreenAdapter {
     private void loadParticleShader() {
         ShaderProgram.pedantic = false;
         particleShaderProgram = new ShaderProgram(
-            Gdx.files.internal("shaders/vert/particle_shader.vert"),
-            Gdx.files.internal("shaders/frag/particle_shader.frag")
-        );
+                Gdx.files.internal("shaders/vert/particle_shader.vert"),
+                Gdx.files.internal("shaders/frag/particle_shader.frag"));
         if (!particleShaderProgram.isCompiled()) {
             throw new GdxRuntimeException("Particle shader failed to compile: " + particleShaderProgram.getLog());
         }
@@ -491,6 +597,49 @@ public final class UniversalTestScene extends ScreenAdapter {
         placeholderEffect.addEmitter(placeholderEmitter);
         placeholderEffect.setActive(false);
         particleManager.addEffect(placeholderEffect);
+
+        // Fix H — atmospheric mist emitter that follows the player each frame.
+        ParticleDefinition mistDefinition = ParticleDefinition.createDefault();
+        mistDefinition.emissionRate = 6f;
+        mistDefinition.emissionDuration = 0f; // 0 = continuous in this system
+        mistDefinition.burstMode = false;
+        mistDefinition.burstLoop = false;
+        mistDefinition.burstStaggerDuration = 0f;
+        mistDefinition.lifetimeMin = 3.5f;
+        mistDefinition.lifetimeMax = 5.5f;
+        mistDefinition.startSizeMin = 0.30f;
+        mistDefinition.startSizeMax = 0.55f;
+        mistDefinition.endSizeMin = 0.80f;
+        mistDefinition.endSizeMax = 1.20f;
+        // Mist is nearly invisible — low alpha via color alpha channel.
+        mistDefinition.startColor = new float[] { 0.55f, 0.62f, 0.70f, 0.07f };
+        mistDefinition.endColor = new float[] { 0.45f, 0.52f, 0.60f, 0.00f };
+        mistDefinition.speedMin = 0.04f;
+        mistDefinition.speedMax = 0.12f;
+        mistDefinition.spreadAngle = 80f;
+        mistDefinition.directionX = 0f;
+        mistDefinition.directionY = 1f;
+        mistDefinition.directionZ = 0f;
+        mistDefinition.gravity = 0f;
+        mistDefinition.blendMode = "ALPHA";
+        mistDefinition.maxParticles = 40;
+        mistDefinition.sanitize();
+
+        mistEffect = new ParticleEffect("Atmospheric Mist");
+        mistEffect.addEmitter(new ParticleEmitter(mistDefinition));
+        mistEffect.setActive(true);
+        particleManager.addEffect(mistEffect);
+    }
+
+    /** INCON-06 / Fix L — per-item-type view model meshes with distinct shapes. */
+    private void buildViewModelMeshes() {
+        viewModelMeshes.put(ItemType.METAL_PIPE, createCubeMesh(0.06f, 0.80f, 0.06f));
+        viewModelMeshes.put(ItemType.GLASS_BOTTLE, createCubeMesh(0.09f, 0.38f, 0.09f));
+        viewModelMeshes.put(ItemType.CARDBOARD_BOX, createCubeMesh(0.32f, 0.32f, 0.32f));
+        viewModelMeshes.put(ItemType.CONCRETE_CHUNK, createCubeMesh(0.22f, 0.20f, 0.22f));
+        viewModelMeshes.put(ItemType.FLARE, createCubeMesh(0.05f, 0.28f, 0.05f));
+        viewModelMeshes.put(ItemType.NOISE_DECOY, createCubeMesh(0.14f, 0.14f, 0.14f));
+        viewModelMeshes.put(ItemType.KEY, createCubeMesh(0.06f, 0.12f, 0.04f));
     }
 
     private void recreateBodyCamFrameBuffers(int width, int height) {
@@ -502,22 +651,25 @@ public final class UniversalTestScene extends ScreenAdapter {
             Bullet.init();
             bulletInitialized = true;
         }
+        // IMPROVE-01 — pre-allocate the ray callback so findRaycastCarriable() never
+        // allocates per frame.
+        cachedRayCallback = new ClosestRayResultCallback(Vector3.Zero, Vector3.Zero);
 
         physicsCollisionConfiguration = new btDefaultCollisionConfiguration();
         physicsCollisionDispatcher = new btCollisionDispatcher(physicsCollisionConfiguration);
         physicsBroadphase = new btDbvtBroadphase();
         physicsConstraintSolver = new btSequentialImpulseConstraintSolver();
         physicsWorld = new btDiscreteDynamicsWorld(
-            physicsCollisionDispatcher,
-            physicsBroadphase,
-            physicsConstraintSolver,
-            physicsCollisionConfiguration
-        );
+                physicsCollisionDispatcher,
+                physicsBroadphase,
+                physicsConstraintSolver,
+                physicsCollisionConfiguration);
         physicsWorld.setGravity(new Vector3(0f, -9.8f, 0f));
 
         btStaticPlaneShape floorShape = new btStaticPlaneShape(new Vector3(0f, 1f, 0f), 0f);
         btDefaultMotionState floorMotionState = new btDefaultMotionState(new Matrix4().idt());
-        btRigidBodyConstructionInfo floorInfo = new btRigidBodyConstructionInfo(0f, floorMotionState, floorShape, Vector3.Zero);
+        btRigidBodyConstructionInfo floorInfo = new btRigidBodyConstructionInfo(0f, floorMotionState, floorShape,
+                Vector3.Zero);
         btRigidBody floorBody = new btRigidBody(floorInfo);
         floorInfo.dispose();
 
@@ -538,8 +690,10 @@ public final class UniversalTestScene extends ScreenAdapter {
             float centerZ = (collider.min.z + collider.max.z) * 0.5f;
 
             btBoxShape shape = new btBoxShape(new Vector3(width * 0.5f, height * 0.5f, depth * 0.5f));
-            btDefaultMotionState motionState = new btDefaultMotionState(new Matrix4().setToTranslation(centerX, centerY, centerZ));
-            btRigidBodyConstructionInfo constructionInfo = new btRigidBodyConstructionInfo(0f, motionState, shape, Vector3.Zero);
+            btDefaultMotionState motionState = new btDefaultMotionState(
+                    new Matrix4().setToTranslation(centerX, centerY, centerZ));
+            btRigidBodyConstructionInfo constructionInfo = new btRigidBodyConstructionInfo(0f, motionState, shape,
+                    Vector3.Zero);
             btRigidBody rigidBody = new btRigidBody(constructionInfo);
             constructionInfo.dispose();
 
@@ -580,7 +734,8 @@ public final class UniversalTestScene extends ScreenAdapter {
         addBox(HUB_X - 8.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
     }
 
-    private void addBox(float centerX, float centerY, float centerZ, float width, float height, float depth, boolean addCollider) {
+    private void addBox(float centerX, float centerY, float centerZ, float width, float height, float depth,
+            boolean addCollider) {
         Mesh mesh = createCubeMesh(width, height, depth);
         sceneMeshes.add(mesh);
         sceneTransforms.add(new Matrix4().setToTranslation(centerX, centerY, centerZ));
@@ -591,71 +746,68 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private void addCollider(float centerX, float centerY, float centerZ, float width, float height, float depth) {
         Vector3 min = new Vector3(
-            centerX - (width * 0.5f),
-            centerY - (height * 0.5f),
-            centerZ - (depth * 0.5f)
-        );
+                centerX - (width * 0.5f),
+                centerY - (height * 0.5f),
+                centerZ - (depth * 0.5f));
         Vector3 max = new Vector3(
-            centerX + (width * 0.5f),
-            centerY + (height * 0.5f),
-            centerZ + (depth * 0.5f)
-        );
+                centerX + (width * 0.5f),
+                centerY + (height * 0.5f),
+                centerZ + (depth * 0.5f));
         worldColliders.add(new BoundingBox(min, max));
     }
 
     private Mesh createCubeMesh(float width, float height, float depth) {
         Mesh mesh = new Mesh(
-            true,
-            24,
-            36,
-            new VertexAttribute(VertexAttributes.Usage.Position, 3, "a_position"),
-            new VertexAttribute(VertexAttributes.Usage.Normal, 3, "a_normal"),
-            new VertexAttribute(VertexAttributes.Usage.ColorUnpacked, 4, "a_color")
-        );
+                true,
+                24,
+                36,
+                new VertexAttribute(VertexAttributes.Usage.Position, 3, "a_position"),
+                new VertexAttribute(VertexAttributes.Usage.Normal, 3, "a_normal"),
+                new VertexAttribute(VertexAttributes.Usage.ColorUnpacked, 4, "a_color"));
 
         float w = width * 0.5f;
         float h = height * 0.5f;
         float d = depth * 0.5f;
 
         float[] vertices = {
-            -w, -h,  d,  0,  0,  1,  1, 1, 1, 1,
-             w, -h,  d,  0,  0,  1,  1, 1, 1, 1,
-             w,  h,  d,  0,  0,  1,  1, 1, 1, 1,
-            -w,  h,  d,  0,  0,  1,  1, 1, 1, 1,
+                -w, -h, d, 0, 0, 1, 1, 1, 1, 1,
+                w, -h, d, 0, 0, 1, 1, 1, 1, 1,
+                w, h, d, 0, 0, 1, 1, 1, 1, 1,
+                -w, h, d, 0, 0, 1, 1, 1, 1, 1,
 
-             w, -h, -d,  0,  0, -1,  1, 1, 1, 1,
-            -w, -h, -d,  0,  0, -1,  1, 1, 1, 1,
-            -w,  h, -d,  0,  0, -1,  1, 1, 1, 1,
-             w,  h, -d,  0,  0, -1,  1, 1, 1, 1,
+                w, -h, -d, 0, 0, -1, 1, 1, 1, 1,
+                -w, -h, -d, 0, 0, -1, 1, 1, 1, 1,
+                -w, h, -d, 0, 0, -1, 1, 1, 1, 1,
+                w, h, -d, 0, 0, -1, 1, 1, 1, 1,
 
-             w, -h,  d,  1,  0,  0,  1, 1, 1, 1,
-             w, -h, -d,  1,  0,  0,  1, 1, 1, 1,
-             w,  h, -d,  1,  0,  0,  1, 1, 1, 1,
-             w,  h,  d,  1,  0,  0,  1, 1, 1, 1,
+                w, -h, d, 1, 0, 0, 1, 1, 1, 1,
+                w, -h, -d, 1, 0, 0, 1, 1, 1, 1,
+                w, h, -d, 1, 0, 0, 1, 1, 1, 1,
+                w, h, d, 1, 0, 0, 1, 1, 1, 1,
 
-            -w, -h, -d, -1,  0,  0,  1, 1, 1, 1,
-            -w, -h,  d, -1,  0,  0,  1, 1, 1, 1,
-            -w,  h,  d, -1,  0,  0,  1, 1, 1, 1,
-            -w,  h, -d, -1,  0,  0,  1, 1, 1, 1,
+                -w, -h, -d, -1, 0, 0, 1, 1, 1, 1,
+                -w, -h, d, -1, 0, 0, 1, 1, 1, 1,
+                -w, h, d, -1, 0, 0, 1, 1, 1, 1,
+                -w, h, -d, -1, 0, 0, 1, 1, 1, 1,
 
-            -w,  h, -d,  0,  1,  0,  1, 1, 1, 1,
-            -w,  h,  d,  0,  1,  0,  1, 1, 1, 1,
-             w,  h,  d,  0,  1,  0,  1, 1, 1, 1,
-             w,  h, -d,  0,  1,  0,  1, 1, 1, 1,
+                -w, h, -d, 0, 1, 0, 1, 1, 1, 1,
+                -w, h, d, 0, 1, 0, 1, 1, 1, 1,
+                w, h, d, 0, 1, 0, 1, 1, 1, 1,
+                w, h, -d, 0, 1, 0, 1, 1, 1, 1,
 
-            -w, -h,  d,  0, -1,  0,  1, 1, 1, 1,
-            -w, -h, -d,  0, -1,  0,  1, 1, 1, 1,
-             w, -h, -d,  0, -1,  0,  1, 1, 1, 1,
-             w, -h,  d,  0, -1,  0,  1, 1, 1, 1
+                -w, -h, d, 0, -1, 0, 1, 1, 1, 1,
+                -w, -h, -d, 0, -1, 0, 1, 1, 1, 1,
+                w, -h, -d, 0, -1, 0, 1, 1, 1, 1,
+                w, -h, d, 0, -1, 0, 1, 1, 1, 1
         };
 
         short[] indices = {
-             0,  1,  2,  2,  3,  0,
-             4,  5,  6,  6,  7,  4,
-             8,  9, 10, 10, 11,  8,
-            12, 13, 14, 14, 15, 12,
-            16, 17, 18, 18, 19, 16,
-            20, 21, 22, 22, 23, 20
+                0, 1, 2, 2, 3, 0,
+                4, 5, 6, 6, 7, 4,
+                8, 9, 10, 10, 11, 8,
+                12, 13, 14, 14, 15, 12,
+                16, 17, 18, 18, 19, 16,
+                20, 21, 22, 22, 23, 20
         };
 
         mesh.setVertices(vertices);
@@ -665,23 +817,22 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private Mesh createFullscreenQuadMesh() {
         Mesh mesh = new Mesh(
-            true,
-            4,
-            6,
-            new VertexAttribute(VertexAttributes.Usage.Position, 3, "a_position"),
-            new VertexAttribute(VertexAttributes.Usage.TextureCoordinates, 2, "a_texCoord0")
-        );
+                true,
+                4,
+                6,
+                new VertexAttribute(VertexAttributes.Usage.Position, 3, "a_position"),
+                new VertexAttribute(VertexAttributes.Usage.TextureCoordinates, 2, "a_texCoord0"));
 
         float[] vertices = {
-            -1f, -1f, 0f, 0f, 0f,
-             1f, -1f, 0f, 1f, 0f,
-             1f,  1f, 0f, 1f, 1f,
-            -1f,  1f, 0f, 0f, 1f
+                -1f, -1f, 0f, 0f, 0f,
+                1f, -1f, 0f, 1f, 0f,
+                1f, 1f, 0f, 1f, 1f,
+                -1f, 1f, 0f, 0f, 1f
         };
 
         short[] indices = {
-            0, 1, 2,
-            2, 3, 0
+                0, 1, 2,
+                2, 3, 0
         };
 
         mesh.setVertices(vertices);
@@ -713,8 +864,8 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         if (cachedSoundPropagationZone != null) {
             float flashAlpha = revealedFlashRemaining > 0.0f
-                ? MathUtils.clamp(revealedFlashRemaining / NODE_FLASH_DURATION, 0.0f, 1.0f)
-                : 0.0f;
+                    ? MathUtils.clamp(revealedFlashRemaining / NODE_FLASH_DURATION, 0.0f, 1.0f)
+                    : 0.0f;
             cachedSoundPropagationZone.setSoundData(lastRevealedNodeIds, flashAlpha, playerPos);
         }
 
@@ -724,43 +875,51 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private boolean handleRuntimeInput() {
-        boolean ctrlPressed = Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT) || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT);
-        if (Gdx.input.isKeyJustPressed(Input.Keys.G)) {
-            if (ctrlPressed) {
-                showBlindRadiusDebug = !showBlindRadiusDebug;
-            } else {
-                showGraphDebug = !showGraphDebug;
-            }
+        // DEBUG KEY MAP
+        // F1  — Toggle graph debug markers
+        // F2  — Toggle blind radius debug overlay
+        // F3  — Reload runtime configs
+        // F4  — Toggle acoustic bounce rays
+        // F5  — Toggle VHS shader
+        // F6  — Toggle microphone input
+        // F7  — Trigger blind flare reveal
+        // F8  — Cycle diagnostic overlay tab
+        // F9  — Switch to PlayerTestScreen
+        // F10 — Switch to UniversalTestScene
+        // F11 — Unused (reserved)
+        // F12 — Unused (reserved)
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F1)) {
+            showGraphDebug = !showGraphDebug;
         }
 
-        boolean reloadPressed =
-            Gdx.input.isKeyJustPressed(Input.Keys.R) &&
-            (Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT) || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT));
-        if (reloadPressed) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F2)) {
+            showBlindRadiusDebug = !showBlindRadiusDebug;
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F3)) {
             bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
             blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
             blindEffectController.reloadConfig(blindEffectConfig);
         }
 
-        if (Gdx.input.isKeyJustPressed(Input.Keys.B)) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F4)) {
             acousticBounceConfig.geometricLayer.renderRays = !acousticBounceConfig.geometricLayer.renderRays;
             acousticBounce3DVisualizer.reloadConfig(acousticBounceConfig);
         }
 
-        if (Gdx.input.isKeyJustPressed(Input.Keys.N)) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F5)) {
             bodyCamSettings.enabled = !bodyCamSettings.enabled;
         }
 
-        if (Gdx.input.isKeyJustPressed(Input.Keys.X)) {
-            emitSoundEventPulse(SoundEvent.CLAP_SHOUT, SoundEvent.CLAP_SHOUT.defaultBaseIntensity());
-        }
+        // INCON-01 — V is the canonical sonar-pulse key; X was a duplicate and is
+        // removed.
         if (Gdx.input.isKeyJustPressed(Input.Keys.V)) {
-            emitSoundEventPulse(SoundEvent.CLAP_SHOUT, SoundEvent.CLAP_SHOUT.defaultBaseIntensity());
+            firePlayerPulse();
         }
-        if (Gdx.input.isKeyJustPressed(Input.Keys.M)) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F6)) {
             toggleMicInput();
         }
-        if (Gdx.input.isKeyJustPressed(Input.Keys.BACKSPACE)) {
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F7)) {
             blindEffectController.triggerFlareReveal();
         }
 
@@ -784,6 +943,8 @@ public final class UniversalTestScene extends ScreenAdapter {
                 return true;
             }
         }
+
+        // Remove runtime multiplayer debug shortcuts; H/C are reserved for menu and crouch.
 
         return false;
     }
@@ -809,13 +970,42 @@ public final class UniversalTestScene extends ScreenAdapter {
         String listenerNodeId = findNearestNodeId(playerPos);
         spatialCueController.setListenerNode(listenerNodeId, playerPos);
 
+        // Fix H — move the atmospheric mist emitter to the player's current feet
+        // position each frame.
+        if (mistEffect != null) {
+            mistEffect.setPosition(playerPos.x, playerPos.y, playerPos.z);
+        }
+
         lastSoundIntensity = Math.max(0f, lastSoundIntensity - (deltaSeconds * 0.9f));
         directorController.update(deltaSeconds);
         panicModel.setThreatDistanceMeters(30f);
         panicModel.setLoudSoundIntensity(lastSoundIntensity);
+        // IMPROVE-09 — placeholder: always full health until enemy damage is wired up.
+        // TODO: Replace with actual player health once EnemyController is implemented.
         panicModel.setHealth(100f, 100f);
         panicModel.update(deltaSeconds);
         blindEffectController.update(deltaSeconds);
+
+        if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE) {
+            tryStartVoiceCapture();
+            multiplayerManager.processPendingEvents(this);
+            processVoiceQueue();
+
+            positionBroadcastTimer += deltaSeconds;
+            if (positionBroadcastTimer >= 0.05f) {
+                positionBroadcastTimer = 0f;
+                multiplayerManager.broadcastPosition(camera.position, camera.direction);
+            }
+
+            for (RemotePlayer rp : multiplayerManager.remotePlayers.values()) {
+                rp.update(deltaSeconds);
+                if (rp.speakingTimer > 0) {
+                    rp.speakingTimer -= deltaSeconds;
+                    if (rp.speakingTimer <= 0)
+                        rp.isSpeaking = false;
+                }
+            }
+        }
     }
 
     private void stepPhysicsWorld(float deltaSeconds) {
@@ -830,6 +1020,14 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void toggleMicInput() {
+        if (multiplayerManager != null
+                && multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE
+                && voiceCaptureStarted) {
+            micEnabled = false;
+            Gdx.app.log("Mic", "Realtime mic toggle is disabled in multiplayer while voice capture is active");
+            return;
+        }
+
         if (micEnabled) {
             micEnabled = false;
             if (realtimeMicSystem != null) {
@@ -838,6 +1036,12 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
             return;
         }
+
+        long nowMillis = TimeUtils.millis();
+        if (nowMillis - lastMicStartAttemptMillis < MIC_START_RETRY_COOLDOWN_MS) {
+            return;
+        }
+        lastMicStartAttemptMillis = nowMillis;
 
         if (realtimeMicSystem == null) {
             return;
@@ -854,7 +1058,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private boolean startMicCaptureWithFallback() {
-        int[] sampleRates = {44100, 22050, 16000};
+        int[] sampleRates = { 44100, 22050, 16000 };
         for (int sampleRate : sampleRates) {
             try {
                 realtimeMicSystem.start(sampleRate, 1024);
@@ -889,6 +1093,9 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
             activeZone = nearest;
             activeZone.onEnter();
+            // IMPROVE-08 — soft acoustic ping on zone enter: reveals new zone nodes and
+            // hints to Director.
+            emitItemEvent(SoundEvent.FOOTSTEP, playerPos, 0.15f);
         }
 
         if (activeZone != null) {
@@ -931,12 +1138,11 @@ public final class UniversalTestScene extends ScreenAdapter {
         Vector3 pulsePos = new Vector3(camera.position);
         String sourceNode = findNearestNodeId(pulsePos);
         SoundEventData eventData = new SoundEventData(
-            eventType,
-            sourceNode,
-            pulsePos,
-            Math.max(0f, intensity),
-            elapsedSeconds
-        );
+                eventType,
+                sourceNode,
+                pulsePos,
+                Math.max(0f, intensity),
+                elapsedSeconds);
 
         fireSoundPulseVisual(pulsePos, eventData.baseIntensity());
         PropagationResult result = soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
@@ -947,12 +1153,11 @@ public final class UniversalTestScene extends ScreenAdapter {
         Vector3 sourcePosition = new Vector3(camera.position);
         String sourceNode = findNearestNodeId(sourcePosition);
         SoundEventData eventData = new SoundEventData(
-            eventType,
-            sourceNode,
-            sourcePosition,
-            Math.max(0f, intensity),
-            elapsedSeconds
-        );
+                eventType,
+                sourceNode,
+                sourcePosition,
+                Math.max(0f, intensity),
+                elapsedSeconds);
 
         soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
     }
@@ -977,6 +1182,7 @@ public final class UniversalTestScene extends ScreenAdapter {
             renderBlindRadiusDebug3d();
         }
         renderPlayerViewModel();
+        renderRemotePlayers(deltaSeconds);
 
         bodyCamFrameBuffer.endScenePass();
     }
@@ -992,12 +1198,11 @@ public final class UniversalTestScene extends ScreenAdapter {
         worldShader.setUniformf("u_shadowStrength", 0.5f);
         worldShader.setUniformf("u_fogColor", 0.06f, 0.07f, 0.10f);
         blindFogUniformUpdater.updateBlindUniforms(
-            worldShader,
-            blindEffectController.fogStartMeters(),
-            blindEffectController.fogEndMeters(),
-            blindEffectController.fogStrength(),
-            blindEffectController.fogColor()
-        );
+                worldShader,
+                blindEffectController.fogStartMeters(),
+                blindEffectController.fogEndMeters(),
+                blindEffectController.fogStrength(),
+                blindEffectController.fogColor());
         worldShader.setUniformf("u_time", elapsedSeconds);
         worldShader.setUniformf("u_scanlineStrength", 0.12f);
         worldShader.setUniformf("u_ditherLevels", 8.0f);
@@ -1041,23 +1246,25 @@ public final class UniversalTestScene extends ScreenAdapter {
         tmpUp.set(camera.up).nor();
 
         tmpViewModelOffset
-            .setZero()
-            .mulAdd(tmpRight, VIEW_MODEL_OFFSET_RIGHT)
-            .mulAdd(tmpUp, VIEW_MODEL_OFFSET_UP)
-            .mulAdd(tmpForward, VIEW_MODEL_OFFSET_FORWARD);
+                .setZero()
+                .mulAdd(tmpRight, VIEW_MODEL_OFFSET_RIGHT)
+                .mulAdd(tmpUp, VIEW_MODEL_OFFSET_UP)
+                .mulAdd(tmpForward, VIEW_MODEL_OFFSET_FORWARD);
 
         playerViewModelTransform
-            .idt()
-            .translate(
-                camera.position.x + tmpViewModelOffset.x,
-                camera.position.y + tmpViewModelOffset.y,
-                camera.position.z + tmpViewModelOffset.z
-            )
-            .rotate(Vector3.Y, playerController.getYaw())
-            .rotate(Vector3.X, -playerController.getPitch())
-            .scale(VIEW_MODEL_SCALE, VIEW_MODEL_SCALE, VIEW_MODEL_SCALE);
+                .idt()
+                .translate(
+                        camera.position.x + tmpViewModelOffset.x,
+                        camera.position.y + tmpViewModelOffset.y,
+                        camera.position.z + tmpViewModelOffset.z)
+                .rotate(Vector3.Y, playerController.getYaw())
+                .rotate(Vector3.X, -playerController.getPitch())
+                .scale(VIEW_MODEL_SCALE, VIEW_MODEL_SCALE, VIEW_MODEL_SCALE);
 
-        Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
+        // IMPROVE-10 — clear depth so the view model renders in front of world geometry
+        // but is still subject to HUD compositing. Avoids depth-test disable artifacts.
+        Gdx.gl.glClear(GL20.GL_DEPTH_BUFFER_BIT);
+        Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
         playerShaderProgram.bind();
         playerShaderProgram.setUniformMatrix("u_projViewTrans", camera.combined);
         playerShaderProgram.setUniformMatrix("u_modelTrans", playerViewModelTransform);
@@ -1069,14 +1276,31 @@ public final class UniversalTestScene extends ScreenAdapter {
         playerShaderProgram.setUniformf("u_rimColor", 0.85f, 0.95f, 1.0f);
         playerShaderProgram.setUniformf("u_rimStrength", 0.28f);
         blindFogUniformUpdater.updateBlindUniforms(
-            playerShaderProgram,
-            blindEffectController.fogStartMeters(),
-            blindEffectController.fogEndMeters(),
-            blindEffectController.fogStrength(),
-            blindEffectController.fogColor()
-        );
-        playerViewModelMesh.render(playerShaderProgram, GL20.GL_TRIANGLES);
-        Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
+                playerShaderProgram,
+                blindEffectController.fogStartMeters(),
+                blindEffectController.fogEndMeters(),
+                blindEffectController.fogStrength(),
+                blindEffectController.fogColor());
+        // INCON-06 / Fix L — use per-item-type mesh; fall back to unit cube for unknown
+        // types.
+        Mesh viewModelMesh = viewModelMeshes.getOrDefault(heldItem.definition().itemType(), playerViewModelMesh);
+        viewModelMesh.render(playerShaderProgram, GL20.GL_TRIANGLES);
+        // Depth test was already enabled above; nothing to restore here.
+    }
+
+    private void renderRemotePlayers(float delta) {
+        if (multiplayerManager.getRole() == MultiplayerManager.Role.OFFLINE)
+            return;
+
+        shapeRenderer.setProjectionMatrix(camera.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        for (RemotePlayer remote : multiplayerManager.remotePlayers.values()) {
+            if (remote.id == multiplayerManager.getLocalPlayerId()) {
+                continue;
+            }
+            remote.render(shapeRenderer);
+        }
+        shapeRenderer.end();
     }
 
     private void renderBlindRadiusDebug3d() {
@@ -1120,11 +1344,12 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private void renderHudOverlays() {
         diagnosticOverlay.update();
+        drainJoinBanners();
 
         CarriableItem focusedCarriable = carrySystem.isHoldingItem() ? null : findNearestFacingCarriable();
         ConsumablePickup focusedConsumable = carrySystem.isHoldingItem() || focusedCarriable != null
-            ? null
-            : findNearestFacingConsumable();
+                ? null
+                : findNearestFacingConsumable();
 
         shapeRenderer.setProjectionMatrix(hudProjection);
         renderCrosshair(focusedCarriable != null || focusedConsumable != null);
@@ -1133,20 +1358,65 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         drawInteractionPrompt(focusedCarriable, focusedConsumable);
         diagnosticOverlay.draw(
-            hudBatch,
-            hudFont,
-            shapeRenderer,
-            hudProjection,
-            activeZone,
-            Gdx.graphics.getWidth(),
-            Gdx.graphics.getHeight(),
-            micRmsHistory,
-            micHistoryCursor,
-            lastMicLevelNormalized,
-            playerController.getStamina() / Math.max(1f, playerController.getMaxStamina()),
-            playerController.getMovementState(),
-            micEnabled && realtimeMicSystem != null && realtimeMicSystem.isActive()
-        );
+                hudBatch,
+                hudFont,
+                shapeRenderer,
+                hudProjection,
+                activeZone,
+                Gdx.graphics.getWidth(),
+                Gdx.graphics.getHeight(),
+                micRmsHistory,
+                micHistoryCursor,
+                lastMicLevelNormalized,
+                playerController.getStamina() / Math.max(1f, playerController.getMaxStamina()),
+                playerController.getMovementState(),
+                micEnabled && realtimeMicSystem != null && realtimeMicSystem.isActive(),
+                System.currentTimeMillis() - lastVoicePlaybackMillis < VOICE_OUTPUT_RECENT_WINDOW_MS,
+                multiplayerManager);
+
+            renderJoinBanners();
+    }
+
+    private void drainJoinBanners() {
+        if (multiplayerManager == null) {
+            return;
+        }
+
+        String banner;
+        while ((banner = multiplayerManager.pendingJoinBanners.poll()) != null) {
+            joinBanners.add(new JoinBanner(banner, 3.0f));
+        }
+    }
+
+    private void renderJoinBanners() {
+        if (joinBanners.isEmpty()) {
+            return;
+        }
+
+        float delta = Gdx.graphics.getDeltaTime();
+        for (int i = joinBanners.size - 1; i >= 0; i--) {
+            JoinBanner banner = joinBanners.get(i);
+            banner.remainingSeconds -= delta;
+            if (banner.remainingSeconds <= 0f) {
+                joinBanners.removeIndex(i);
+            }
+        }
+
+        if (joinBanners.isEmpty()) {
+            return;
+        }
+
+        hudBatch.begin();
+        float x = 16f;
+        float y = Gdx.graphics.getHeight() - 40f;
+        for (int i = 0; i < joinBanners.size; i++) {
+            JoinBanner banner = joinBanners.get(i);
+            float alpha = MathUtils.clamp(banner.remainingSeconds / 3.0f, 0f, 1f);
+            hudFont.setColor(0.88f, 0.95f, 1.0f, alpha);
+            hudFont.draw(hudBatch, banner.text, x, y - (i * 22f));
+        }
+        hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
+        hudBatch.end();
     }
 
     private void drawInteractionPrompt(CarriableItem focusedCarriable, ConsumablePickup focusedConsumable) {
@@ -1172,7 +1442,8 @@ public final class UniversalTestScene extends ScreenAdapter {
             hudBatch.end();
         }
 
-        if (itemDestroyedMessageRemaining <= 0f || lastItemDestroyedMessage == null || lastItemDestroyedMessage.isBlank()) {
+        if (itemDestroyedMessageRemaining <= 0f || lastItemDestroyedMessage == null
+                || lastItemDestroyedMessage.isBlank()) {
             return;
         }
 
@@ -1229,17 +1500,19 @@ public final class UniversalTestScene extends ScreenAdapter {
         tmpRayDirection.set(camera.direction).nor();
         tmpRayEnd.set(camera.position).mulAdd(tmpRayDirection, PICKUP_RANGE);
 
-        ClosestRayResultCallback rayResultCallback = new ClosestRayResultCallback(camera.position, tmpRayEnd);
-        try {
-            physicsWorld.rayTest(camera.position, tmpRayEnd, rayResultCallback);
-            if (!rayResultCallback.hasHit()) {
-                return null;
-            }
-
-            return resolveCarriableFromCollisionObject(rayResultCallback.getCollisionObject());
-        } finally {
-            rayResultCallback.dispose();
+        // IMPROVE-01 — reuse the pre-allocated callback; reset hit state each call.
+        if (cachedRayCallback == null) {
+            cachedRayCallback = new ClosestRayResultCallback(camera.position, tmpRayEnd);
         }
+        cachedRayCallback.setRayFromWorld(camera.position);
+        cachedRayCallback.setRayToWorld(tmpRayEnd);
+        cachedRayCallback.setCollisionObject(null);
+        cachedRayCallback.setClosestHitFraction(1f);
+        physicsWorld.rayTest(camera.position, tmpRayEnd, cachedRayCallback);
+        if (!cachedRayCallback.hasHit()) {
+            return null;
+        }
+        return resolveCarriableFromCollisionObject(cachedRayCallback.getCollisionObject());
     }
 
     private CarriableItem resolveCarriableFromCollisionObject(btCollisionObject collisionObject) {
@@ -1379,7 +1652,9 @@ public final class UniversalTestScene extends ScreenAdapter {
             float x = startX + (slotIndex * (slotSize + slotGap));
             InventorySystem.InventorySlotEntry slotEntry = inventorySystem.getSlotEntry(slotIndex);
 
-            shapeRenderer.setColor(slotIndex == inventorySystem.getActiveSlotIndex() ? 0.95f : 0.28f, slotIndex == inventorySystem.getActiveSlotIndex() ? 0.72f : 0.30f, slotIndex == inventorySystem.getActiveSlotIndex() ? 0.22f : 0.34f, 0.92f);
+            shapeRenderer.setColor(slotIndex == inventorySystem.getActiveSlotIndex() ? 0.95f : 0.28f,
+                    slotIndex == inventorySystem.getActiveSlotIndex() ? 0.72f : 0.30f,
+                    slotIndex == inventorySystem.getActiveSlotIndex() ? 0.22f : 0.34f, 0.92f);
             shapeRenderer.rect(x, y, slotSize, slotSize);
 
             if (slotEntry != null) {
@@ -1399,9 +1674,9 @@ public final class UniversalTestScene extends ScreenAdapter {
     private void drawControlsLegend() {
         String line1 = "[WASD] Move    [Mouse] Look    [F] Pick up item    [Tab] Stash to inventory";
         String line2 = "[1-4] Slots    [Q] Drop item   [E] Use item        [Right-click] Throw";
-        String line3 = "[X/V] Sonar pulse (keyboard)   [M] Toggle mic      [G] Toggle graph debug";
-        String line4 = "[B] Toggle bounce rays         [N] Toggle VHS shader";
-        String line5 = "[F9] -> PlayerTestScreen       [F10] -> UniversalTestScene";
+        String line3 = "[X/V] Sonar pulse (keyboard)   [F6] Toggle mic     [F1] Toggle graph debug";
+        String line4 = "[F2] Toggle blind radius debug [F4] Toggle bounce rays  [F5] Toggle VHS shader";
+        String line5 = "[F3] Reload configs [F7] Trigger flare [F8] Cycle debug tab [F9/F10] Switch screens";
         String line6 = directorController.snapshot().hudLine();
 
         float padding = 12.0f;
@@ -1409,9 +1684,10 @@ public final class UniversalTestScene extends ScreenAdapter {
         float startY = Gdx.graphics.getHeight() - padding;
 
         float textWidth = Math.max(
-            hudFont.getRegion().getRegionWidth(),
-            Math.max(line1.length(), Math.max(line2.length(), Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), line6.length()))))) * 6.2f
-        );
+                hudFont.getRegion().getRegionWidth(),
+                Math.max(line1.length(), Math.max(line2.length(),
+                        Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), line6.length())))))
+                        * 6.2f);
         float startX = Gdx.graphics.getWidth() - textWidth - 16.0f;
 
         hudBatch.begin();
@@ -1432,8 +1708,8 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
 
         float flashAlpha = revealedFlashRemaining > 0.0f
-            ? MathUtils.clamp(revealedFlashRemaining / NODE_FLASH_DURATION, 0.0f, 1.0f)
-            : 0.0f;
+                ? MathUtils.clamp(revealedFlashRemaining / NODE_FLASH_DURATION, 0.0f, 1.0f)
+                : 0.0f;
 
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         for (ObjectMap.Entry<String, Vector3> entry : graphNodePositions.entries()) {
@@ -1480,6 +1756,55 @@ public final class UniversalTestScene extends ScreenAdapter {
         soundPulseShaderRenderer.fire(worldPosition, intensity);
     }
 
+    public void triggerSoundPulse(Vector3 worldPosition, float intensity) {
+        Packets.SoundEventPacket packet = new Packets.SoundEventPacket();
+        packet.position = new Vector3(worldPosition);
+        packet.strength = intensity;
+        packet.eventType = SoundEvent.CLAP_SHOUT.ordinal();
+        applyRemoteSoundEvent(packet);
+    }
+
+    public void applyRemoteSoundEvent(Packets.SoundEventPacket packet) {
+        if (packet == null || packet.position == null) {
+            return;
+        }
+
+        Gdx.app.postRunnable(() -> {
+            SoundEvent eventType = SoundEvent.CLAP_SHOUT;
+            SoundEvent[] values = SoundEvent.values();
+            if (packet.eventType >= 0 && packet.eventType < values.length) {
+                eventType = values[packet.eventType];
+            }
+
+            Vector3 pulsePos = new Vector3(packet.position);
+            String sourceNode = findNearestNodeId(pulsePos);
+            SoundEventData eventData = new SoundEventData(
+                    eventType,
+                    sourceNode,
+                    pulsePos,
+                    Math.max(0f, packet.strength),
+                    elapsedSeconds);
+
+            fireSoundPulseVisual(pulsePos, eventData.baseIntensity());
+            PropagationResult result = soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
+            cacheRevealedNodesForFlash(result);
+        });
+    }
+
+    private void firePlayerPulse() {
+        float intensity = SoundEvent.CLAP_SHOUT.defaultBaseIntensity();
+        emitSoundEventPulse(SoundEvent.CLAP_SHOUT, intensity);
+
+        if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE) {
+            Packets.SoundEventPacket packet = new Packets.SoundEventPacket();
+            packet.sourcePlayerId = multiplayerManager.getLocalPlayerId();
+            packet.position = new Vector3(camera.position);
+            packet.strength = intensity;
+            packet.eventType = SoundEvent.CLAP_SHOUT.ordinal();
+            multiplayerManager.broadcastSoundEvent(packet);
+        }
+    }
+
     private void spawnInitialCarriableItems() {
         spawnCarriableItem(ItemType.GLASS_BOTTLE, HUB_X + 1.5f, 0.5f, HUB_Z + 1.0f, 0.15f, 0.55f, 0.15f);
         spawnCarriableItem(ItemType.METAL_PIPE, HUB_X - 1.5f, 0.5f, HUB_Z + 1.0f, 0.18f, 0.90f, 0.18f);
@@ -1488,18 +1813,18 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private void spawnInitialConsumablePickups() {
         worldConsumablePickups.add(new ConsumablePickup(ItemType.FLARE, new Vector3(HUB_X + 5f, 0.2f, HUB_Z + 5f)));
-        worldConsumablePickups.add(new ConsumablePickup(ItemType.NOISE_DECOY, new Vector3(HUB_X - 5f, 0.2f, HUB_Z - 5f)));
+        worldConsumablePickups
+                .add(new ConsumablePickup(ItemType.NOISE_DECOY, new Vector3(HUB_X - 5f, 0.2f, HUB_Z - 5f)));
     }
 
     private void spawnCarriableItem(
-        ItemType itemType,
-        float x,
-        float y,
-        float z,
-        float width,
-        float height,
-        float depth
-    ) {
+            ItemType itemType,
+            float x,
+            float y,
+            float z,
+            float width,
+            float height,
+            float depth) {
         float spawnY = Math.max(y, FLOOR_Y + (height * 0.5f) + ITEM_SPAWN_Y_OFFSET);
         ItemDefinition definition = ItemDefinition.create(itemType);
         CarriableItem carriableItem = new CarriableItem(definition, new Vector3(x, spawnY, z));
@@ -1530,19 +1855,17 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private btRigidBody createCarriableRigidBody(
-        ItemDefinition definition,
-        btCollisionShape collisionShape,
-        btDefaultMotionState motionState
-    ) {
+            ItemDefinition definition,
+            btCollisionShape collisionShape,
+            btDefaultMotionState motionState) {
         tmpInertia.setZero();
         collisionShape.calculateLocalInertia(definition.mass(), tmpInertia);
 
         btRigidBodyConstructionInfo constructionInfo = new btRigidBodyConstructionInfo(
-            definition.mass(),
-            motionState,
-            collisionShape,
-            tmpInertia
-        );
+                definition.mass(),
+                motionState,
+                collisionShape,
+                tmpInertia);
         btRigidBody rigidBody = new btRigidBody(constructionInfo);
         constructionInfo.dispose();
 
@@ -1590,7 +1913,8 @@ public final class UniversalTestScene extends ScreenAdapter {
             CarriableItem thrownItem = carrySystem.throwHeldItem(camera.direction, throwStrength);
             if (thrownItem != null) {
                 tmpItemDirection.set(camera.direction).nor();
-                thrownItem.setWorldPosition(tmpDropPosition.set(camera.position).mulAdd(tmpItemDirection, 0.8f).add(0f, 0.1f, 0f));
+                thrownItem.setWorldPosition(
+                        tmpDropPosition.set(camera.position).mulAdd(tmpItemDirection, 0.8f).add(0f, 0.1f, 0f));
             }
         }
 
@@ -1608,20 +1932,20 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
 
         if (Gdx.input.isKeyJustPressed(Input.Keys.Q)) {
-            InventorySystem.InventorySlotEntry removedEntry = inventorySystem.removeItem(inventorySystem.getActiveSlotIndex());
+            InventorySystem.InventorySlotEntry removedEntry = inventorySystem
+                    .removeItem(inventorySystem.getActiveSlotIndex());
             if (removedEntry != null) {
                 ItemDefinition itemDefinition = removedEntry.itemDefinition();
                 if (itemDefinition.isCarriable()) {
                     tmpDropPosition.set(camera.position).mulAdd(camera.direction, 1.1f);
                     spawnCarriableItem(
-                        itemDefinition.itemType(),
-                        tmpDropPosition.x,
-                        Math.max(0.2f, tmpDropPosition.y - 0.8f),
-                        tmpDropPosition.z,
-                        0.25f,
-                        0.25f,
-                        0.25f
-                    );
+                            itemDefinition.itemType(),
+                            tmpDropPosition.x,
+                            Math.max(0.2f, tmpDropPosition.y - 0.8f),
+                            tmpDropPosition.z,
+                            0.25f,
+                            0.25f,
+                            0.25f);
                 } else {
                     emitItemEvent(SoundEvent.OBJECT_DROP_OR_BREAK, tmpDropPosition.set(camera.position), 0.25f);
                 }
@@ -1673,6 +1997,8 @@ public final class UniversalTestScene extends ScreenAdapter {
     private boolean tryPickupNearestConsumable() {
         ConsumablePickup nearest = null;
         float nearestDistanceSquared = Float.POSITIVE_INFINITY;
+        // INCON-05 — consumable pickup now requires the same facing check as carriable
+        // pickup.
         tmpItemDirection.set(camera.direction).nor();
 
         for (ConsumablePickup pickup : worldConsumablePickups) {
@@ -1688,6 +2014,8 @@ public final class UniversalTestScene extends ScreenAdapter {
 
             float distance = (float) Math.sqrt(distanceSquared);
             tmpToItem.scl(1.0f / distance);
+            // INCON-05 fix: require INTERACTION_FACING_DOT (0.70) facing check, same as
+            // carriable items.
             float facingDot = tmpItemDirection.dot(tmpToItem);
             if (facingDot < INTERACTION_FACING_DOT) {
                 continue;
@@ -1736,7 +2064,8 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         ItemDefinition itemDefinition = activeEntry.itemDefinition();
         if (itemDefinition.itemType() == ItemType.NOISE_DECOY) {
-            emitItemEvent(SoundEvent.NOISE_DECOY, tmpDropPosition.set(camera.position).mulAdd(camera.direction, 4.0f), 0.70f);
+            emitItemEvent(SoundEvent.NOISE_DECOY, tmpDropPosition.set(camera.position).mulAdd(camera.direction, 4.0f),
+                    0.70f);
         } else if (itemDefinition.itemType() == ItemType.FLARE) {
             blindEffectController.triggerFlareReveal();
             emitItemEvent(SoundEvent.OBJECT_DROP_OR_BREAK, tmpDropPosition.set(camera.position), 0.30f);
@@ -1760,8 +2089,12 @@ public final class UniversalTestScene extends ScreenAdapter {
             int contactCount = manifold.getNumContacts();
             float maxImpulse = 0f;
             boolean hasImpact = false;
+            boolean hasRealContact = false;
             for (int contactIndex = 0; contactIndex < contactCount; contactIndex++) {
                 btManifoldPoint contactPoint = manifold.getContactPoint(contactIndex);
+                if (contactPoint.getDistance() <= 0f) {
+                    hasRealContact = true;
+                }
                 float appliedImpulse = contactPoint.getAppliedImpulse();
                 if (appliedImpulse <= 0f) {
                     continue;
@@ -1774,7 +2107,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 }
             }
 
-            if (!hasImpact) {
+            if (!hasImpact && hasRealContact) {
                 maxImpulse = estimateImpactImpulse(carriableItem);
                 hasImpact = maxImpulse > 0f;
                 if (hasImpact) {
@@ -1789,11 +2122,10 @@ public final class UniversalTestScene extends ScreenAdapter {
 
             if (hasImpact) {
                 PropagationResult propagationResult = impactListener.onCarriableImpact(
-                    carriableItem,
-                    tmpImpulsePoint,
-                    maxImpulse,
-                    elapsedSeconds
-                );
+                        carriableItem,
+                        tmpImpulsePoint,
+                        maxImpulse,
+                        elapsedSeconds);
                 if (propagationResult != null) {
                     cacheRevealedNodesForFlash(propagationResult);
                 }
@@ -1977,8 +2309,8 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
 
         if (lastNearestNodeQueryPosition.x == lastNearestNodeQueryPosition.x
-            && worldPosition.dst2(lastNearestNodeQueryPosition) <= 0.04f
-            && cachedNearestNodeId != null) {
+                && worldPosition.dst2(lastNearestNodeQueryPosition) <= 0.04f
+                && cachedNearestNodeId != null) {
             return cachedNearestNodeId;
         }
 
@@ -2052,19 +2384,52 @@ public final class UniversalTestScene extends ScreenAdapter {
     private void emitItemEvent(SoundEvent eventType, Vector3 worldPosition, float intensity) {
         String sourceNodeId = findNearestNodeId(worldPosition);
         SoundEventData eventData = new SoundEventData(
-            eventType,
-            sourceNodeId,
-            worldPosition,
-            intensity,
-            elapsedSeconds
-        );
+                eventType,
+                sourceNodeId,
+                worldPosition,
+                intensity,
+                elapsedSeconds);
         fireSoundPulseVisual(worldPosition, intensity);
         PropagationResult propagationResult = soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
         cacheRevealedNodesForFlash(propagationResult);
+
+        // Share with other players
+        if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE) {
+            Packets.SoundEventPacket packet = new Packets.SoundEventPacket();
+            packet.sourcePlayerId = multiplayerManager.getLocalPlayerId();
+            packet.position = new Vector3(worldPosition);
+            packet.strength = intensity;
+            packet.eventType = eventType.ordinal();
+            multiplayerManager.broadcastSoundEvent(packet);
+        }
+    }
+
+    private void processVoiceQueue() {
+        VoiceChunkPacket chunk;
+        while ((chunk = multiplayerManager.pendingVoiceChunks.poll()) != null) {
+            if (chunk.sourcePlayerId == multiplayerManager.getLocalPlayerId()) {
+                continue;
+            }
+            RemotePlayer rp = multiplayerManager.remotePlayers.get(chunk.sourcePlayerId);
+            if (rp != null) {
+                voicePlayback.receiveChunk(chunk, rp, camera.position, camera.direction);
+                lastVoicePlaybackMillis = System.currentTimeMillis();
+            }
+        }
     }
 
     private void updateHudProjection(int width, int height) {
         hudProjection.setToOrtho2D(0.0f, 0.0f, width, height);
+    }
+
+    private static final class JoinBanner {
+        private final String text;
+        private float remainingSeconds;
+
+        private JoinBanner(String text, float remainingSeconds) {
+            this.text = text;
+            this.remainingSeconds = remainingSeconds;
+        }
     }
 
     @Override
@@ -2159,6 +2524,18 @@ public final class UniversalTestScene extends ScreenAdapter {
         if (playerViewModelMesh != null) {
             playerViewModelMesh.dispose();
         }
+        // INCON-06/Fix L — dispose per-item view model meshes.
+        for (Mesh viewMesh : viewModelMeshes.values()) {
+            if (viewMesh != null) {
+                viewMesh.dispose();
+            }
+        }
+        viewModelMeshes.clear();
+        // IMPROVE-01 — dispose the cached ray callback.
+        if (cachedRayCallback != null) {
+            cachedRayCallback.dispose();
+            cachedRayCallback = null;
+        }
         if (fullscreenQuadMesh != null) {
             fullscreenQuadMesh.dispose();
         }
@@ -2189,6 +2566,12 @@ public final class UniversalTestScene extends ScreenAdapter {
         if (shapeRenderer != null) {
             shapeRenderer.dispose();
         }
+        if (voiceCapture != null)
+            voiceCapture.dispose();
+        if (voicePlayback != null)
+            voicePlayback.dispose();
+        if (multiplayerManager != null)
+            multiplayerManager.dispose();
         if (hudBatch != null) {
             hudBatch.dispose();
         }
@@ -2215,7 +2598,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
     }
 
-    private static final class ConsumablePickup {
+    public static final class ConsumablePickup {
         private final ItemType itemType;
         private final Vector3 position;
         private boolean collected;

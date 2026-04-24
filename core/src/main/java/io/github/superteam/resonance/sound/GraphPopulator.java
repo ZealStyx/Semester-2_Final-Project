@@ -171,6 +171,8 @@ public final class GraphPopulator {
     }
 
     private float[] wallHeightSamples(float minY, float maxY) {
+        // Phase 1.1 fix: start samples at 0.9 m (chest/ear height) so graph nodes sit where
+        // sound propagates through open corridors, not at floor level where geometry occludes them.
         float low = Math.min(maxY - WALL_NODE_INSET_METERS, minY + 0.9f);
         float mid = Math.min(maxY - WALL_NODE_INSET_METERS, minY + 1.6f);
         if (Math.abs(low - mid) < 0.15f) {

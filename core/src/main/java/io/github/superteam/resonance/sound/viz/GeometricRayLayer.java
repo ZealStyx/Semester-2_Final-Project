@@ -36,24 +36,45 @@ public final class GeometricRayLayer {
 
         int rayCount = Math.max(1, config.rayCount);
         float maxDistance = Math.max(1f, config.rayMaxDistanceMeters);
-        for (int index = 0; index < rayCount; index++) {
-            Vector3 direction = fibonacciDirection(index, rayCount);
-            Vector3 rayStart = new Vector3(sourcePosition).mulAdd(direction, 0.1f);
-            Vector3 rayEnd = new Vector3(rayStart).mulAdd(direction, maxDistance);
 
-            Vector3 nearestHit = findNearestHit(rayStart, direction, maxDistance);
-            if (nearestHit != null) {
-                float travelDistance = rayStart.dst(nearestHit);
-                if (resolveBounceDepth(travelDistance) > config.maxBounceDepth) {
+        // Fix E — multi-height vertical spread: fire rays from three Y offsets so bounce markers
+        // appear across the full wall surface (floor-sill, chest, head level).
+        float[] heightOffsets = {0.1f, 0.9f, 1.7f};
+
+        for (int heightIndex = 0; heightIndex < heightOffsets.length; heightIndex++) {
+            float yOffset = heightOffsets[heightIndex];
+            // Reduce ray count per height tier so total stays manageable.
+            int tierRayCount = Math.max(1, rayCount / heightOffsets.length);
+
+            for (int index = 0; index < tierRayCount; index++) {
+                // Interleave directions across tiers so each tier covers unique angular sectors.
+                int globalIndex = index * heightOffsets.length + heightIndex;
+                int totalRays = tierRayCount * heightOffsets.length;
+                Vector3 direction = fibonacciDirection(globalIndex, totalRays);
+
+                // Suppress rays pointing steeply up or down so they hit walls, not ceiling/floor.
+                if (Math.abs(direction.y) > 0.8f) {
                     continue;
                 }
-                float intensity = MathUtils.clamp(strength / ((travelDistance * travelDistance * 0.08f) + 1f), 0.05f, 1f);
-                activeRays.add(new RayTraceSample(rayStart, nearestHit, intensity, strength, config.fadeOutSeconds));
-            } else {
-                if (resolveBounceDepth(maxDistance) > config.maxBounceDepth) {
-                    continue;
+
+                Vector3 origin = new Vector3(sourcePosition.x, sourcePosition.y + yOffset, sourcePosition.z);
+                Vector3 rayStart = new Vector3(origin).mulAdd(direction, 0.1f);
+                Vector3 rayEnd = new Vector3(rayStart).mulAdd(direction, maxDistance);
+
+                Vector3 nearestHit = findNearestHit(rayStart, direction, maxDistance);
+                if (nearestHit != null) {
+                    float travelDistance = rayStart.dst(nearestHit);
+                    if (resolveBounceDepth(travelDistance) > config.maxBounceDepth) {
+                        continue;
+                    }
+                    float intensity = MathUtils.clamp(strength / ((travelDistance * travelDistance * 0.08f) + 1f), 0.05f, 1f);
+                    activeRays.add(new RayTraceSample(rayStart, nearestHit, intensity, strength, config.fadeOutSeconds));
+                } else {
+                    if (resolveBounceDepth(maxDistance) > config.maxBounceDepth) {
+                        continue;
+                    }
+                    activeRays.add(new RayTraceSample(rayStart, rayEnd, MathUtils.clamp(strength, 0.05f, 1f), strength, config.fadeOutSeconds));
                 }
-                activeRays.add(new RayTraceSample(rayStart, rayEnd, MathUtils.clamp(strength, 0.05f, 1f), strength, config.fadeOutSeconds));
             }
         }
     }

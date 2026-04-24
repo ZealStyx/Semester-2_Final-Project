@@ -8,6 +8,8 @@ import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.utils.Array;
 import io.github.superteam.resonance.devTest.universal.TestZone;
 import io.github.superteam.resonance.player.MovementState;
+import io.github.superteam.resonance.multiplayer.MultiplayerManager;
+import io.github.superteam.resonance.multiplayer.RemotePlayer;
 
 public final class DiagnosticOverlay {
     private final TabCycler tabCycler = new TabCycler();
@@ -16,6 +18,10 @@ public final class DiagnosticOverlay {
 
     public void update() {
         tabCycler.update();
+    }
+
+    public String activeTab() {
+        return tabCycler.activeTab();
     }
 
     public void draw(
@@ -31,7 +37,9 @@ public final class DiagnosticOverlay {
         float micLevelNormalized,
         float staminaNormalized,
         MovementState movementState,
-        boolean micActive
+        boolean micActive,
+        boolean recentVoiceOutput,
+        MultiplayerManager multiplayerManager
     ) {
         String tab = tabCycler.activeTab();
         float x = 16.0f;
@@ -53,6 +61,20 @@ public final class DiagnosticOverlay {
             font.draw(batch, "Stamina=" + String.format("%.2f", staminaNormalized) + " state=" + movementState, x, y - (line * 2.0f));
         } else if ("ZONE".equals(tab)) {
             font.draw(batch, "ActiveZone=" + (activeZone == null ? "none" : activeZone.getZoneName()), x, y - line);
+        } else if ("NETWORK".equals(tab)) {
+            font.draw(batch, "Role: " + multiplayerManager.getRole(), x, y - line);
+            font.draw(batch, "Players: " + multiplayerManager.getKnownPlayerCount(), x, y - (line * 2.0f));
+            String micStatus = micActive ? "ACTIVE" : "OFF";
+            font.draw(batch, "Mic: " + micStatus, x, y - (line * 3.0f));
+            font.draw(batch, "Voice output: " + (recentVoiceOutput ? "RECENT" : "IDLE"), x, y - (line * 4.0f));
+            int i = 0;
+            for (RemotePlayer rp : multiplayerManager.remotePlayers.values()) {
+                if (rp.id == multiplayerManager.getLocalPlayerId()) {
+                    continue;
+                }
+                font.draw(batch, "- " + rp.name + (rp.isSpeaking ? " [TALKING]" : ""), x + 8, y - (line * (5.0f + i)));
+                i++;
+            }
         } else {
             font.draw(batch, "WASD move | Shift run | Ctrl slow | C crouch | Space jump", x, y - line);
             font.draw(batch, "F10 from PlayerTestScreen enters this shell", x, y - (line * 2.0f));

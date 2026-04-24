@@ -6,6 +6,7 @@ import com.badlogic.gdx.Screen;
 import io.github.superteam.resonance.devTest.ModelDebugScreen;
 import io.github.superteam.resonance.devTest.PlayerTestScreen;
 import io.github.superteam.resonance.devTest.universal.UniversalTestScene;
+import io.github.superteam.resonance.devTest.universal.MultiplayerTestMenuScreen;
 
 /** {@link com.badlogic.gdx.ApplicationListener} implementation shared by all platforms. */
 public class Main extends Game {
@@ -21,7 +22,8 @@ public class Main extends Game {
             return;
         }
 
-        setScreen(new PlayerTestScreen());
+        // Default to multiplayer menu
+        setScreen(new MultiplayerTestMenuScreen());
     }
 
     @Override

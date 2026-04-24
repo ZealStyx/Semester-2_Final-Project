@@ -23,6 +23,7 @@ public final class BlindEffectController {
     private float visibilityMeters;
     private float fogStartMeters;
     private float fogEndMeters;
+    private float tierFogMultiplier = 1f;
 
     public BlindEffectController(BlindEffectRevealConfig config, PanicLevelProvider panicLevelProvider) {
         this.config = config == null ? new BlindEffectRevealConfig() : config;
@@ -115,7 +116,8 @@ public final class BlindEffectController {
     }
 
     private void updateFogBounds() {
-        fogEndMeters = Math.max(0.5f, visibilityMeters);
+        float effectiveVisibility = Math.max(0.1f, visibilityMeters * tierFogMultiplier);
+        fogEndMeters = Math.max(0.5f, effectiveVisibility);
         float fogZoneWidth = Math.max(0.1f, fogEndMeters * config.fogZoneWidthFraction);
         fogStartMeters = Math.max(0.05f, fogEndMeters - fogZoneWidth);
     }
@@ -156,6 +158,15 @@ public final class BlindEffectController {
 
     public Array<String> debugLines() {
         return debugLines;
+    }
+
+    /**
+     * Applies an external visibility multiplier (for example, Director tier pressure).
+     * Values less than 1 tighten visibility/fog, values greater than 1 relax it.
+     */
+    public void setTierFogMultiplier(float multiplier) {
+        tierFogMultiplier = MathUtils.clamp(multiplier, 0.25f, 2.0f);
+        updateFogBounds();
     }
 
     public String compactDebugText() {
