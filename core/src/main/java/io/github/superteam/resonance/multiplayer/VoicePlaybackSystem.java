@@ -8,6 +8,7 @@ import io.github.superteam.resonance.multiplayer.packets.Packets.VoiceChunkPacke
 import javax.sound.sampled.*;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 public final class VoicePlaybackSystem implements Disposable {
 
@@ -48,8 +49,13 @@ public final class VoicePlaybackSystem implements Disposable {
         sourcePlayer.isSpeaking = packet.rmsLevel > SILENCE_THRESHOLD;
         sourcePlayer.speakingTimer = 0.3f;  // fade-out delay
 
-        // Write PCM to line
-        line.write(packet.pcmData);
+        line.pushJitter(packet.sequenceNumber, packet.pcmData);
+        byte[] frame = line.popJitter();
+        if (frame == null) {
+            return;
+        }
+
+        line.write(frame);
     }
 
     private PlayerAudioLine openLine(int sampleRate) {
@@ -72,10 +78,13 @@ public final class VoicePlaybackSystem implements Disposable {
     }
 
     private static final class PlayerAudioLine {
+        private static final int INITIAL_JITTER_FILL = 3;
+
         private final SourceDataLine line;
         private final int sampleRate;
         private final FloatControl gainControl;
         private final FloatControl panControl;
+        private final JitterBuffer jitterBuffer = new JitterBuffer(INITIAL_JITTER_FILL);
 
         PlayerAudioLine(SourceDataLine line, int sampleRate) {
             this.line = line;
@@ -102,7 +111,58 @@ public final class VoicePlaybackSystem implements Disposable {
             if (panControl != null) panControl.setValue(panLR);
         }
 
+        void pushJitter(int sequenceNumber, byte[] payload) {
+            if (payload == null || payload.length == 0) {
+                return;
+            }
+            jitterBuffer.push(sequenceNumber, payload);
+        }
+
+        byte[] popJitter() {
+            return jitterBuffer.pop();
+        }
+
         void write(byte[] pcm) { line.write(pcm, 0, pcm.length); }
         void close() { line.stop(); line.close(); }
+    }
+
+    private static final class JitterBuffer {
+        private final TreeMap<Integer, byte[]> frames = new TreeMap<>();
+        private final int initialFillSize;
+        private int expectedSequence = Integer.MIN_VALUE;
+
+        private JitterBuffer(int initialFillSize) {
+            this.initialFillSize = Math.max(1, initialFillSize);
+        }
+
+        void push(int sequenceNumber, byte[] payload) {
+            frames.put(sequenceNumber, payload);
+        }
+
+        byte[] pop() {
+            if (frames.isEmpty()) {
+                return null;
+            }
+
+            if (expectedSequence == Integer.MIN_VALUE) {
+                if (frames.size() < initialFillSize) {
+                    return null;
+                }
+                expectedSequence = frames.firstKey();
+            }
+
+            byte[] next = frames.remove(expectedSequence);
+            if (next != null) {
+                expectedSequence++;
+                return next;
+            }
+
+            Map.Entry<Integer, byte[]> earliest = frames.pollFirstEntry();
+            if (earliest == null) {
+                return null;
+            }
+            expectedSequence = earliest.getKey() + 1;
+            return earliest.getValue();
+        }
     }
 }

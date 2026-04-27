@@ -3,17 +3,27 @@ package io.github.superteam.resonance;
 import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Screen;
 
+import io.github.superteam.resonance.devTest.FilePicker;
 import io.github.superteam.resonance.devTest.ModelDebugScreen;
-import io.github.superteam.resonance.devTest.PlayerTestScreen;
 import io.github.superteam.resonance.devTest.universal.UniversalTestScene;
 import io.github.superteam.resonance.devTest.universal.MultiplayerTestMenuScreen;
 
 /** {@link com.badlogic.gdx.ApplicationListener} implementation shared by all platforms. */
 public class Main extends Game {
+    private final FilePicker filePicker;
+
+    public Main() {
+        this(FilePicker.NOOP);
+    }
+
+    public Main(FilePicker filePicker) {
+        this.filePicker = filePicker == null ? FilePicker.NOOP : filePicker;
+    }
+
     @Override
     public void create() {
         if (Boolean.getBoolean("resonance.modelDebug")) {
-            setScreen(new ModelDebugScreen());
+            setScreen(new ModelDebugScreen(filePicker));
             return;
         }
 
@@ -22,7 +32,7 @@ public class Main extends Game {
             return;
         }
 
-        // Default to multiplayer menu
+        // Default to model debug screen
         setScreen(new MultiplayerTestMenuScreen());
     }
 

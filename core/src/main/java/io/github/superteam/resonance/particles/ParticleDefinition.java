@@ -143,6 +143,7 @@ public class ParticleDefinition {
     public String depthMode = DepthMode.WRITE.name();
     public boolean depthSort = false;
     public boolean retroEffect = false;
+    public String billboardMode = ParticleBillboardMode.SPHERICAL.name();
 
     public boolean velocityStretch = false;
     public float velocityStretchFactor = 0.25f;
@@ -310,6 +311,7 @@ public class ParticleDefinition {
         }
         blendMode = ParticleBlendMode.fromName(blendMode).name();
         depthMode = DepthMode.fromName(depthMode).name();
+        billboardMode = ParticleBillboardMode.fromName(billboardMode).name();
 
         velocityStretchFactor = Math.max(0f, velocityStretchFactor);
         velocityStretchMin = Math.max(0f, velocityStretchMin);

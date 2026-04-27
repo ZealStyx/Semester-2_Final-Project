@@ -43,7 +43,6 @@ import com.badlogic.gdx.utils.GdxRuntimeException;
 import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.TimeUtils;
 import io.github.superteam.resonance.director.DirectorController;
-import io.github.superteam.resonance.devTest.PlayerTestScreen;
 import io.github.superteam.resonance.devTest.universal.diagnostics.DiagnosticOverlay;
 import io.github.superteam.resonance.devTest.universal.zones.BlindChamberZone;
 import io.github.superteam.resonance.devTest.universal.zones.CrouchAlcoveZone;
@@ -339,11 +338,11 @@ public final class UniversalTestScene extends ScreenAdapter {
         directorController = new DirectorController();
 
         buildParticleSystems();
-        soundPulseShaderRenderer = new SoundPulseShaderRenderer();
 
         buildProceduralHubScene();
         initializeZones();
         registerZoneColliders();
+        soundPulseShaderRenderer = new SoundPulseShaderRenderer(worldColliders);
         playerController.setWorldColliders(worldColliders);
         playerViewModelMesh = createCubeMesh(1.0f, 1.0f, 1.0f);
         buildViewModelMeshes();
@@ -456,6 +455,11 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void onLocalVoiceChunkReady(VoiceChunkPacket chunk) {
+        int localId = multiplayerManager.getLocalPlayerId();
+        if (localId > 0) {
+            chunk.sourcePlayerId = localId;
+        }
+
         if (multiplayerManager.getRole() == MultiplayerManager.Role.HOST) {
             multiplayerManager.broadcastVoice(chunk);
         } else if (multiplayerManager.getRole() == MultiplayerManager.Role.CLIENT) {
@@ -468,14 +472,23 @@ public final class UniversalTestScene extends ScreenAdapter {
             return;
         }
 
-        if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE && multiplayerManager.hasLocalPlayerId()) {
+        if (multiplayerManager.getRole() == MultiplayerManager.Role.OFFLINE) {
+            return;
+        }
+
+        int localId = multiplayerManager.getLocalPlayerId();
+        if (localId <= 0) {
+            return;
+        }
+
+        if (multiplayerManager.hasLocalPlayerId()) {
             if (realtimeMicSystem != null && realtimeMicSystem.isActive()) {
                 realtimeMicSystem.stop();
                 micEnabled = false;
                 Gdx.app.log("Mic", "Stopped realtime mic before multiplayer voice capture start");
             }
 
-            if (voiceCapture.start(multiplayerManager.getLocalPlayerId())) {
+            if (voiceCapture.start(localId)) {
                 voiceCaptureStarted = true;
             } else {
                 voiceCaptureStartBlocked = true;
@@ -732,6 +745,11 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         addBox(HUB_X - 8.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
         addBox(HUB_X - 8.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
+
+        // Low-ceiling crouch tunnel centered on the crouch alcove zone.
+        addBox(HUB_X, 1.1f, HUB_Z - 16.0f, 6.0f, 0.2f, 8.0f, true);
+        addBox(HUB_X - 3.1f, 0.55f, HUB_Z - 16.0f, 0.2f, 1.1f, 8.0f, true);
+        addBox(HUB_X + 3.1f, 0.55f, HUB_Z - 16.0f, 0.2f, 1.1f, 8.0f, true);
     }
 
     private void addBox(float centerX, float centerY, float centerZ, float width, float height, float depth,
@@ -884,9 +902,9 @@ public final class UniversalTestScene extends ScreenAdapter {
         // F6  — Toggle microphone input
         // F7  — Trigger blind flare reveal
         // F8  — Cycle diagnostic overlay tab
-        // F9  — Switch to PlayerTestScreen
+        // F9  — Switch to multiplayer menu
         // F10 — Switch to UniversalTestScene
-        // F11 — Unused (reserved)
+        // F11 — Switch to GltfMapTestScene
         // F12 — Unused (reserved)
         if (Gdx.input.isKeyJustPressed(Input.Keys.F1)) {
             showGraphDebug = !showGraphDebug;
@@ -926,7 +944,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         if (Gdx.input.isKeyJustPressed(Input.Keys.F9)) {
             if (Gdx.app.getApplicationListener() instanceof Game game) {
                 Screen previous = game.getScreen();
-                game.setScreen(new PlayerTestScreen());
+                game.setScreen(new MultiplayerTestMenuScreen());
                 if (previous != null && previous != game.getScreen()) {
                     Gdx.app.postRunnable(previous::dispose);
                 }
@@ -937,6 +955,16 @@ public final class UniversalTestScene extends ScreenAdapter {
             if (Gdx.app.getApplicationListener() instanceof Game game) {
                 Screen previous = game.getScreen();
                 game.setScreen(new UniversalTestScene());
+                if (previous != null && previous != game.getScreen()) {
+                    Gdx.app.postRunnable(previous::dispose);
+                }
+                return true;
+            }
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F11)) {
+            if (Gdx.app.getApplicationListener() instanceof Game game) {
+                Screen previous = game.getScreen();
+                game.setScreen(new GltfMapTestScene());
                 if (previous != null && previous != game.getScreen()) {
                     Gdx.app.postRunnable(previous::dispose);
                 }
@@ -1112,6 +1140,13 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void handleMicInput(float delta) {
+        if (voiceCaptureStarted && voiceCapture != null) {
+            float normalizedLevel = voiceCapture.getNormalizedRms(3000f);
+            lastMicLevelNormalized = MathUtils.clamp(normalizedLevel, 0f, 1f);
+            pushMicLevelSample(lastMicLevelNormalized);
+            return;
+        }
+
         if (!micEnabled || realtimeMicSystem == null || !realtimeMicSystem.isActive()) {
             lastMicLevelNormalized = Math.max(0f, lastMicLevelNormalized - (delta * 2.0f));
             pushMicLevelSample(lastMicLevelNormalized);
@@ -1370,7 +1405,8 @@ public final class UniversalTestScene extends ScreenAdapter {
                 lastMicLevelNormalized,
                 playerController.getStamina() / Math.max(1f, playerController.getMaxStamina()),
                 playerController.getMovementState(),
-                micEnabled && realtimeMicSystem != null && realtimeMicSystem.isActive(),
+                (micEnabled && realtimeMicSystem != null && realtimeMicSystem.isActive())
+                    || (voiceCaptureStarted && lastMicLevelNormalized > 0.02f),
                 System.currentTimeMillis() - lastVoicePlaybackMillis < VOICE_OUTPUT_RECENT_WINDOW_MS,
                 multiplayerManager);
 
@@ -1674,10 +1710,13 @@ public final class UniversalTestScene extends ScreenAdapter {
     private void drawControlsLegend() {
         String line1 = "[WASD] Move    [Mouse] Look    [F] Pick up item    [Tab] Stash to inventory";
         String line2 = "[1-4] Slots    [Q] Drop item   [E] Use item        [Right-click] Throw";
-        String line3 = "[X/V] Sonar pulse (keyboard)   [F6] Toggle mic     [F1] Toggle graph debug";
+        String line3 = "[V] Sonar pulse (keyboard)     [F6] Toggle mic     [F1] Toggle graph debug";
         String line4 = "[F2] Toggle blind radius debug [F4] Toggle bounce rays  [F5] Toggle VHS shader";
         String line5 = "[F3] Reload configs [F7] Trigger flare [F8] Cycle debug tab [F9/F10] Switch screens";
-        String line6 = directorController.snapshot().hudLine();
+        String line6 = "Crouch tunnel: (" + (int) HUB_X + ", " + (int) (HUB_Z - 16f) + ")  Sound zone: ("
+            + (int) HUB_X + ", " + (int) (HUB_Z + 16f) + ")  Blind zone: (" + (int) HUB_X + ", "
+            + (int) (HUB_Z + 32f) + ")";
+        String line7 = directorController.snapshot().hudLine();
 
         float padding = 12.0f;
         float lineHeight = 14.0f;
@@ -1686,7 +1725,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         float textWidth = Math.max(
                 hudFont.getRegion().getRegionWidth(),
                 Math.max(line1.length(), Math.max(line2.length(),
-                        Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), line6.length())))))
+                    Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), Math.max(line6.length(), line7.length()))))))
                         * 6.2f);
         float startX = Gdx.graphics.getWidth() - textWidth - 16.0f;
 
@@ -1698,6 +1737,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         hudFont.draw(hudBatch, line4, startX, startY - (lineHeight * 3f));
         hudFont.draw(hudBatch, line5, startX, startY - (lineHeight * 4f));
         hudFont.draw(hudBatch, line6, startX, startY - (lineHeight * 5f));
+        hudFont.draw(hudBatch, line7, startX, startY - (lineHeight * 6f));
         hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
         hudBatch.end();
     }
@@ -2075,6 +2115,9 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void processBulletImpacts() {
+        ObjectMap<CarriableItem, Float> strongestImpulseByItem = new ObjectMap<>();
+        ObjectMap<CarriableItem, Vector3> impactPointByItem = new ObjectMap<>();
+
         int manifoldCount = physicsCollisionDispatcher.getNumManifolds();
         for (int manifoldIndex = 0; manifoldIndex < manifoldCount; manifoldIndex++) {
             btPersistentManifold manifold = physicsCollisionDispatcher.getManifoldByIndexInternal(manifoldIndex);
@@ -2121,14 +2164,28 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
 
             if (hasImpact) {
-                PropagationResult propagationResult = impactListener.onCarriableImpact(
-                        carriableItem,
-                        tmpImpulsePoint,
-                        maxImpulse,
-                        elapsedSeconds);
-                if (propagationResult != null) {
-                    cacheRevealedNodesForFlash(propagationResult);
+                Float strongestImpulse = strongestImpulseByItem.get(carriableItem);
+                if (strongestImpulse == null || maxImpulse > strongestImpulse) {
+                    strongestImpulseByItem.put(carriableItem, maxImpulse);
+                    impactPointByItem.put(carriableItem, new Vector3(tmpImpulsePoint));
                 }
+            }
+        }
+
+        for (ObjectMap.Entry<CarriableItem, Float> entry : strongestImpulseByItem.entries()) {
+            CarriableItem carriableItem = entry.key;
+            Vector3 impactPoint = impactPointByItem.get(carriableItem);
+            if (carriableItem == null || impactPoint == null) {
+                continue;
+            }
+
+            PropagationResult propagationResult = impactListener.onCarriableImpact(
+                    carriableItem,
+                    impactPoint,
+                    entry.value,
+                    elapsedSeconds);
+            if (propagationResult != null) {
+                cacheRevealedNodesForFlash(propagationResult);
             }
         }
     }

@@ -9,6 +9,7 @@ import com.esotericsoftware.kryonet.Client;
 import com.esotericsoftware.kryonet.Connection;
 import com.esotericsoftware.kryonet.Listener;
 import com.esotericsoftware.kryonet.Server;
+import io.github.superteam.resonance.devTest.universal.GltfMapTestScene;
 import io.github.superteam.resonance.devTest.universal.UniversalTestScene;
 import io.github.superteam.resonance.multiplayer.packets.Packets.*;
 
@@ -165,6 +166,13 @@ public final class MultiplayerManager implements Disposable {
         }
     }
 
+    public void processPendingEvents(GltfMapTestScene scene) {
+        SoundEventPacket evt;
+        while ((evt = pendingSoundEvents.poll()) != null) {
+            scene.applyRemoteSoundEvent(evt);
+        }
+    }
+
     @Override
     public void dispose() {
         stopNetworkResources();
@@ -312,8 +320,12 @@ public final class MultiplayerManager implements Disposable {
                 kryoServer.sendToAllExceptTCP(connection.getID(), s);
             } else if (object instanceof VoiceChunkPacket v) {
                 v.sourcePlayerId = connection.getID();
-                pendingVoiceChunks.add(v);
                 kryoServer.sendToAllExceptUDP(connection.getID(), v);
+
+                int hostLocalId = resolveLocalPlayerId();
+                if (hostLocalId <= 0 || v.sourcePlayerId != hostLocalId) {
+                    pendingVoiceChunks.add(v);
+                }
             } else if (object instanceof PingPacket p) {
                 PingAckPacket ack = new PingAckPacket();
                 ack.timestamp = p.timestamp;

@@ -10,6 +10,9 @@ import java.util.Objects;
 public final class ReflectionEngine {
     private static final float SOUND_SPEED_METERS_PER_SECOND = 343f;
     private static final float MIN_REFLECTION_INTENSITY = 0.08f;
+    private static final float FLOOR_Y = 0f;
+    private static final float FLOOR_REFLECTION_COEFFICIENT = 0.38f;
+    private static final float MIN_FLOOR_BOUNCE_HEIGHT = 0.05f;
 
     public List<ReflectionEvent> computeReflections(
         AcousticGraphEngine acousticGraphEngine,
@@ -63,6 +66,20 @@ public final class ReflectionEngine {
                 continue;
             }
 
+            emitFloorReflection(
+                acousticGraphEngine,
+                dijkstraPathfinder,
+                soundBalancingConfig,
+                incomingPropagationResult,
+                revealNodeId,
+                incomingIntensity,
+                bounceDepth,
+                reflectionEvents
+            );
+            if (reflectionEvents.size() >= soundBalancingConfig.maxReflectionsPerEvent()) {
+                return;
+            }
+
             List<GraphEdge> adjacentEdges = acousticGraphEngine.getAdjacentEdges(revealNodeId);
             for (GraphEdge adjacentEdge : adjacentEdges) {
                 float reflectedIntensity = incomingIntensity * adjacentEdge.material().reflectionCoefficient();
@@ -107,5 +124,59 @@ public final class ReflectionEngine {
                 );
             }
         }
+    }
+
+    private void emitFloorReflection(
+        AcousticGraphEngine acousticGraphEngine,
+        DijkstraPathfinder dijkstraPathfinder,
+        SoundBalancingConfig soundBalancingConfig,
+        PropagationResult incomingPropagationResult,
+        String bounceNodeId,
+        float incomingIntensity,
+        int bounceDepth,
+        List<ReflectionEvent> reflectionEvents
+    ) {
+        GraphNode bounceNode = acousticGraphEngine.requireNode(bounceNodeId);
+        float nodeHeight = bounceNode.position().y - FLOOR_Y;
+        if (nodeHeight <= MIN_FLOOR_BOUNCE_HEIGHT) {
+            return;
+        }
+
+        float reflectedIntensity = incomingIntensity * FLOOR_REFLECTION_COEFFICIENT;
+        if (reflectedIntensity <= MIN_REFLECTION_INTENSITY) {
+            return;
+        }
+
+        PropagationResult reflectionPropagationResult = dijkstraPathfinder.onSoundEvent(
+            acousticGraphEngine,
+            bounceNodeId,
+            reflectedIntensity,
+            soundBalancingConfig.attenuationAlphaForBand(FrequencyBand.HIGH),
+            soundBalancingConfig.revealThreshold()
+        );
+
+        float distanceToBounceNode = incomingPropagationResult.getDistanceOrInfinity(bounceNodeId);
+        float verticalBounceDistance = Math.max(0f, nodeHeight * 2f);
+        float totalDelayDistance = (Float.isFinite(distanceToBounceNode) ? distanceToBounceNode : 0f) + verticalBounceDistance;
+        float delaySeconds = Math.max(0f, totalDelayDistance / SOUND_SPEED_METERS_PER_SECOND);
+
+        reflectionEvents.add(
+            new ReflectionEvent(
+                bounceNodeId,
+                reflectedIntensity,
+                delaySeconds,
+                bounceDepth,
+                reflectionPropagationResult
+            )
+        );
+
+        computeReflectionsRecursive(
+            acousticGraphEngine,
+            dijkstraPathfinder,
+            soundBalancingConfig,
+            reflectionPropagationResult,
+            bounceDepth + 1,
+            reflectionEvents
+        );
     }
 }

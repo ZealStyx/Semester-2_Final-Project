@@ -65,10 +65,15 @@ public class ParticleEmitter {
     private final Vector3 collisionPointBuffer = new Vector3();
     private final Vector3 collisionNormalBuffer = new Vector3();
     private final Vector3 ringAxisBuffer = new Vector3(0f, 1f, 0f);
+    private final Vector3 billboardToCamera = new Vector3();
+    private final Vector3 billboardDirection = new Vector3();
+    private final Vector3 billboardDirectionXZ = new Vector3();
     private final Vector3 velocityDirectionBuffer = new Vector3();
     private final Vector3 angularDeltaEulerDegrees = new Vector3();
     private final Quaternion orientationQuaternion = new Quaternion();
     private final Quaternion orientationDeltaQuaternion = new Quaternion();
+    private final Quaternion renderOrientation = new Quaternion();
+    private final Quaternion horizontalOrientation = new Quaternion().setEulerAngles(0f, 0f, -90f);
     private final Matrix4 identityTransform = new Matrix4();
     private final float[] gradientSample = new float[4];
     private final Vector3 sortCameraPos = new Vector3();
@@ -271,6 +276,8 @@ public class ParticleEmitter {
             return;
         }
 
+        ParticleBillboardMode billboardMode = getActiveBillboardMode();
+
         ParticleBlendMode blendMode = ParticleBlendMode.fromName(definition.blendMode);
         if (blendMode == ParticleBlendMode.ALPHA && definition.depthSort && activeParticles.size > 1 && camera != null) {
             sortParticlesByDepth(camera);
@@ -347,6 +354,11 @@ public class ParticleEmitter {
         for (int i = 0; i < activeParticles.size; i++) {
             ParticleInstance particle = activeParticles.get(i);
             float ageRatio = particle.age / particle.life;
+            resolveRenderOrientation(particle, camera, billboardMode, renderOrientation);
+            particle.modelTransform.idt()
+                .translate(particle.position)
+                .rotate(renderOrientation)
+                .scale(particle.currentScaleX, particle.currentScaleY, particle.currentScaleZ);
             shaderProgram.setUniformMatrix("u_modelTrans", particle.modelTransform);
             shaderProgram.setUniformf(
                 "u_color",
@@ -1179,6 +1191,7 @@ public class ParticleEmitter {
 
     private void renderInstanced(ShaderProgram shaderProgram, PerspectiveCamera camera) {
         ensureInstanceDataCapacity();
+        ParticleBillboardMode billboardMode = getActiveBillboardMode();
 
         shaderProgram.setUniformMatrix("u_modelTrans", identityTransform.idt());
 
@@ -1193,10 +1206,11 @@ public class ParticleEmitter {
             instanceData[cursor++] = particle.currentScaleX;
             instanceData[cursor++] = particle.currentScaleY;
             instanceData[cursor++] = particle.currentScaleZ;
-            instanceData[cursor++] = particle.orientation.x;
-            instanceData[cursor++] = particle.orientation.y;
-            instanceData[cursor++] = particle.orientation.z;
-            instanceData[cursor++] = particle.orientation.w;
+            resolveRenderOrientation(particle, camera, billboardMode, renderOrientation);
+            instanceData[cursor++] = renderOrientation.x;
+            instanceData[cursor++] = renderOrientation.y;
+            instanceData[cursor++] = renderOrientation.z;
+            instanceData[cursor++] = renderOrientation.w;
             instanceData[cursor++] = particle.currentColor.r;
             instanceData[cursor++] = particle.currentColor.g;
             instanceData[cursor++] = particle.currentColor.b;
@@ -1210,6 +1224,67 @@ public class ParticleEmitter {
 
         particleMesh.setInstanceData(instanceData, 0, cursor);
         particleMesh.render(shaderProgram, GL20.GL_TRIANGLES);
+    }
+
+    private ParticleBillboardMode getActiveBillboardMode() {
+        ParticleBillboardMode mode = ParticleBillboardMode.fromName(definition.billboardMode);
+        if (mode == ParticleBillboardMode.SPHERICAL && definition.velocityStretch) {
+            return ParticleBillboardMode.VELOCITY_STRETCHED;
+        }
+        return mode;
+    }
+
+    private void resolveRenderOrientation(
+        ParticleInstance particle,
+        PerspectiveCamera camera,
+        ParticleBillboardMode mode,
+        Quaternion outOrientation
+    ) {
+        if (mode == null || mode == ParticleBillboardMode.WORLD_FIXED || camera == null) {
+            outOrientation.set(particle.orientation);
+            return;
+        }
+
+        switch (mode) {
+            case Y_AXIS_LOCKED:
+                billboardToCamera.set(camera.position).sub(particle.position);
+                billboardToCamera.y = 0f;
+                if (billboardToCamera.isZero(0.0001f)) {
+                    outOrientation.set(particle.orientation);
+                } else {
+                    outOrientation.setFromCross(Vector3.Z, billboardToCamera.nor());
+                }
+                return;
+            case VELOCITY_ALIGNED:
+            case VELOCITY_STRETCHED:
+                if (particle.velocity.isZero(0.0001f)) {
+                    outOrientation.set(particle.orientation);
+                } else {
+                    billboardDirection.set(particle.velocity).nor();
+                    outOrientation.setFromCross(Vector3.Y, billboardDirection);
+                }
+                return;
+            case HORIZONTAL:
+                outOrientation.set(horizontalOrientation);
+                return;
+            case SPHERICAL:
+            default:
+                billboardToCamera.set(camera.position).sub(particle.position);
+                if (billboardToCamera.isZero(0.0001f)) {
+                    outOrientation.set(particle.orientation);
+                    return;
+                }
+
+                billboardDirection.set(billboardToCamera).nor();
+                billboardDirectionXZ.set(billboardDirection.x, 0f, billboardDirection.z);
+                if (billboardDirectionXZ.isZero(0.0001f)) {
+                    outOrientation.set(particle.orientation);
+                    return;
+                }
+
+                outOrientation.setFromCross(Vector3.Z, billboardDirectionXZ.nor());
+                return;
+        }
     }
 
     private float getLiveSpawnRadius(float delta) {

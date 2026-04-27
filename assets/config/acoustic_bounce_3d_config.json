@@ -8,6 +8,8 @@
     "render_rays": true,
     "ray_count": 36,
     "ray_max_distance_meters": 30.0,
+    "ground_enabled": true,
+    "ground_absorption": 0.40,
     "bounce_marker_scale": 0.3,
     "fade_out_seconds": 3.0
   },

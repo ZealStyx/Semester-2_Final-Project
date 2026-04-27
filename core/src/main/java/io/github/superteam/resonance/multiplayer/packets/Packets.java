@@ -56,6 +56,7 @@ public class Packets {
         public int    sampleRate;
         public byte[] pcmData;
         public float  rmsLevel;
+        public boolean isOpus;
 
         public VoiceChunkPacket() {}
     }

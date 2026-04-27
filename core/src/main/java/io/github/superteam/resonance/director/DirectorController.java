@@ -4,6 +4,7 @@ import com.badlogic.gdx.math.MathUtils;
 import io.github.superteam.resonance.player.PlayerFeatureExtractor;
 import io.github.superteam.resonance.sound.EchoDirectorListener;
 import io.github.superteam.resonance.sound.EnemyHearingTarget;
+import io.github.superteam.resonance.sound.HearingCategory;
 import io.github.superteam.resonance.sound.PropagationResult;
 import io.github.superteam.resonance.sound.SoundEventData;
 
@@ -53,6 +54,10 @@ public final class DirectorController implements PlayerFeatureExtractor.PlayerFe
     @Override
     public void onSoundHeard(float propagatedIntensity, SoundEventData soundEventData) {
         if (soundEventData == null || propagatedIntensity < HEARING_THRESHOLD) {
+            return;
+        }
+
+        if (soundEventData.eventType().hearingCategory() == HearingCategory.AMBIENCE) {
             return;
         }
 

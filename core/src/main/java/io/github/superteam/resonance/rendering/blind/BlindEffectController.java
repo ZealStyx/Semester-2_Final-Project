@@ -81,8 +81,10 @@ public final class BlindEffectController {
             return false;
         }
         SoundEvent event = soundEventData.eventType();
-        if (event == SoundEvent.CLAP_SHOUT || event == SoundEvent.MIC_INPUT) {
-            return false;
+        if ((event == SoundEvent.CLAP_SHOUT || event == SoundEvent.MIC_INPUT)
+                && config.sonarReveal.enabled
+                && config.sonarReveal.triggersAcousticVisualization) {
+            return triggerSonarReveal();
         }
         return false;
     }

@@ -54,6 +54,8 @@ public class PlayerController {
     private static final float STAMINA_DRAIN_RATE = 22f;
     private static final float STAMINA_REGEN_RATE = 14f;
     private static final float STAMINA_REGEN_THRESHOLD = 25f;
+    private static final float AIR_CONTROL_FACTOR = 0.08f;
+    private static final float AIR_MAX_HORIZONTAL_SPEED = 3.5f;
 
     // ==================== Fields ====================
 
@@ -271,14 +273,31 @@ public class PlayerController {
         boolean collidedThisTick = false;
         Vector3 moveDir = computeMovementDirection();
 
-        if (moveDir.len2() > 0.001f) {
-            moveDir.nor();
-            float speed = currentState.speed;
-            velocity.x = moveDir.x * speed;
-            velocity.z = moveDir.z * speed;
+        if (isGrounded) {
+            if (moveDir.len2() > 0.001f) {
+                moveDir.nor();
+                float speed = currentState.speed;
+                velocity.x = moveDir.x * speed;
+                velocity.z = moveDir.z * speed;
+            } else {
+                velocity.x = 0;
+                velocity.z = 0;
+            }
         } else {
-            velocity.x = 0;
-            velocity.z = 0;
+            if (moveDir.len2() > 0.001f) {
+                moveDir.nor();
+                float nudge = currentState.speed * AIR_CONTROL_FACTOR;
+                velocity.x += moveDir.x * nudge;
+                velocity.z += moveDir.z * nudge;
+            }
+
+            float hSpeed2 = (velocity.x * velocity.x) + (velocity.z * velocity.z);
+            if (hSpeed2 > (AIR_MAX_HORIZONTAL_SPEED * AIR_MAX_HORIZONTAL_SPEED)) {
+                float hSpeed = (float) Math.sqrt(hSpeed2);
+                float scale = AIR_MAX_HORIZONTAL_SPEED / Math.max(hSpeed, 0.0001f);
+                velocity.x *= scale;
+                velocity.z *= scale;
+            }
         }
 
         float nextX = position.x + (velocity.x * delta);

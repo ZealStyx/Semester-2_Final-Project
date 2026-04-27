@@ -94,6 +94,9 @@ public class MultiplayerTestMenuScreen extends ScreenAdapter {
         if (Gdx.input.isKeyJustPressed(Input.Keys.O)) {
             launchGame(new MultiplayerLaunchConfig(MultiplayerLaunchConfig.Role.OFFLINE));
         }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.G)) {
+            launchGltfMapOffline();
+        }
     }
 
     private void handleClientConnectInput() {
@@ -256,6 +259,7 @@ public class MultiplayerTestMenuScreen extends ScreenAdapter {
         drawButton(centerX, centerY + 20, "H - HOST", isMouseOver(centerX, centerY + 20));
         drawButton(centerX, centerY - 40, "C - CLIENT", isMouseOver(centerX, centerY - 40));
         drawButton(centerX, centerY - 100, "O - OFFLINE", isMouseOver(centerX, centerY - 100));
+        drawButton(centerX, centerY - 160, "G - GLTF MAP (offline)", isMouseOver(centerX, centerY - 160));
 
         drawCenteredText("[ESC] Exit", 40, smallFont);
     }
@@ -314,6 +318,11 @@ public class MultiplayerTestMenuScreen extends ScreenAdapter {
 
         // Transition to scene
         ((Game) Gdx.app.getApplicationListener()).setScreen(scene);
+    }
+
+    private void launchGltfMapOffline() {
+        state = MenuState.LAUNCHING;
+        ((Game) Gdx.app.getApplicationListener()).setScreen(new GltfMapTestScene());
     }
 
     @Override

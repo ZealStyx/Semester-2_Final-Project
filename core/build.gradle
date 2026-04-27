@@ -10,6 +10,7 @@ dependencies {
   api "com.badlogicgames.gdx:gdx:$gdxVersion"
   api "com.esotericsoftware:kryo:$kryoVersion"
   api "com.github.crykn:kryonet:$kryoNetVersion"
+  api "com.github.mgsx-dev.gdx-gltf:gltf:2.2.1"
   api project(':shared')
 
   testImplementation "junit:junit:4.13.2"

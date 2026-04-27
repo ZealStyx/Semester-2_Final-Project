@@ -1,6 +1,7 @@
 package io.github.superteam.resonance.multiplayer;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.utils.Disposable;
 import io.github.superteam.resonance.multiplayer.packets.Packets.VoiceChunkPacket;
 
@@ -23,6 +24,7 @@ public final class VoiceCaptureSystem implements Disposable {
     private int frameSamples;
     private int bytesPerFrame;
     private volatile boolean startFailed;
+    private volatile float lastRmsLevel;
 
     public VoiceCaptureSystem(Consumer<VoiceChunkPacket> onChunkReady) {
         this.onChunkReady = onChunkReady;
@@ -49,6 +51,7 @@ public final class VoiceCaptureSystem implements Disposable {
                 if (read <= 0) continue;
 
                 float rms = computeRms(buffer, read);
+                lastRmsLevel = rms;
                 if (rms < SILENCE_THRESHOLD) continue;  // voice activity gate
 
                 VoiceChunkPacket packet = new VoiceChunkPacket();
@@ -57,6 +60,8 @@ public final class VoiceCaptureSystem implements Disposable {
                 packet.sampleRate = sampleRate;
                 packet.pcmData = Arrays.copyOf(buffer, read);
                 packet.rmsLevel = rms;
+                packet.isOpus = false;
+
                 onChunkReady.accept(packet);
             }
         }, "VoiceCapture");
@@ -99,6 +104,14 @@ public final class VoiceCaptureSystem implements Disposable {
             sumSquares += (long) sample * sample;
         }
         return (float) Math.sqrt((double) sumSquares / (length / 2));
+    }
+
+    public float getLastRmsLevel() {
+        return lastRmsLevel;
+    }
+
+    public float getNormalizedRms(float maxRms) {
+        return MathUtils.clamp(lastRmsLevel / Math.max(1f, maxRms), 0f, 1f);
     }
 
     @Override

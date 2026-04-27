@@ -44,6 +44,8 @@ public final class AcousticBounceConfigStore {
                 config.geometricLayer.rayCount = geometricLayer.getInt("ray_count", config.geometricLayer.rayCount);
                 config.geometricLayer.maxBounceDepth = geometricLayer.getInt("max_bounce_depth", config.geometricLayer.maxBounceDepth);
                 config.geometricLayer.rayMaxDistanceMeters = geometricLayer.getFloat("ray_max_distance_meters", config.geometricLayer.rayMaxDistanceMeters);
+                config.geometricLayer.groundEnabled = geometricLayer.getBoolean("ground_enabled", config.geometricLayer.groundEnabled);
+                config.geometricLayer.groundAbsorption = geometricLayer.getFloat("ground_absorption", config.geometricLayer.groundAbsorption);
                 config.geometricLayer.bounceMarkerScale = geometricLayer.getFloat("bounce_marker_scale", config.geometricLayer.bounceMarkerScale);
                 config.geometricLayer.fadeOutSeconds = geometricLayer.getFloat("fade_out_seconds", config.geometricLayer.fadeOutSeconds);
             }

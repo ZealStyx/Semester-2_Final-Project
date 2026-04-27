@@ -1,0 +1,35 @@
+{
+  "events": [
+    {
+      "id": "debug-set-flag",
+      "displayName": "Debug Flag Toggle",
+      "repeatMode": "ONCE_PER_SESSION",
+      "cooldownSeconds": 0.0,
+      "actions": [
+        {
+          "type": "SET_FLAG",
+          "flagName": "debug.event.flag",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "zone-enter-sound-propagation",
+      "displayName": "Sound Zone Enter",
+      "repeatMode": "ONCE_PER_SESSION",
+      "cooldownSeconds": 0.0,
+      "actions": [
+        {
+          "type": "SET_FLAG",
+          "flagName": "zone.sound.entered",
+          "value": true
+        },
+        {
+          "type": "PLAY_SOUND",
+          "soundPath": "audio/sfx/env/test.wav",
+          "volume": 0.6
+        }
+      ]
+    }
+  ]
+}

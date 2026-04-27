@@ -154,6 +154,10 @@ Thumbs.db
 *#*#
 /.kotlin/
 /assets/assets.txt
+compile_output.txt
+*.resolved
+*.resolved.*
+*.metadata.json
 
 ## Special cases:
 

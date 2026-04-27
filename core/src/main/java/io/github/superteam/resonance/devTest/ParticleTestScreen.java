@@ -4,6 +4,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Game;
 import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.PerspectiveCamera;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
@@ -31,8 +32,8 @@ import com.badlogic.gdx.scenes.scene2d.utils.BaseDrawable;
 import com.badlogic.gdx.scenes.scene2d.utils.ChangeListener;
 import com.badlogic.gdx.scenes.scene2d.utils.Drawable;
 import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable;
-import com.badlogic.gdx.utils.ScreenUtils;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
+import io.github.superteam.resonance.devTest.universal.UniversalTestScene;
 import io.github.superteam.resonance.particles.ParticleEffect;
 import io.github.superteam.resonance.particles.ParticleBlendMode;
 import io.github.superteam.resonance.particles.ParticleDefinition;
@@ -176,7 +177,8 @@ public class ParticleTestScreen extends ScreenAdapter {
         trailEmitter.setHeadPosition(trailHeadPosition);
         particleManager.update(delta, camera);
 
-        ScreenUtils.clear(0.03f, 0.02f, 0.06f, 1f, true);
+        Gdx.gl.glClearColor(0.03f, 0.02f, 0.06f, 1f);
+        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
         particleManager.render(shaderProgram, camera);
 
         activeCountLabel.setText("Active particles: " + particleManager.getActiveParticleCount());
@@ -751,12 +753,12 @@ public class ParticleTestScreen extends ScreenAdapter {
         table.add(formulaVortexButton).width(TRIPLE_BUTTON_WIDTH).left();
         table.row();
 
-        TextButton soundTestButton = new TextButton("Sound Test", skin);
+        TextButton soundTestButton = new TextButton("Universal Test", skin);
         soundTestButton.addListener(new ChangeListener() {
             @Override
             public void changed(ChangeEvent event, Actor actor) {
                 if (Gdx.app.getApplicationListener() instanceof Game) {
-                    ((Game) Gdx.app.getApplicationListener()).setScreen(new SoundTestScreen());
+                    ((Game) Gdx.app.getApplicationListener()).setScreen(new UniversalTestScene());
                 }
             }
         });

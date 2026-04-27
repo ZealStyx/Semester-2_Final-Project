@@ -14,6 +14,8 @@ import com.badlogic.gdx.utils.Array;
  * Fires spherical ray casts against scene bounds and renders bounce markers.
  */
 public final class GeometricRayLayer {
+    private static final float FLOOR_Y = 0f;
+
     private final Array<BoundingBox> colliders;
     private final Array<RayTraceSample> activeRays = new Array<>();
     private final Vector3 tmpHit = new Vector3();
@@ -68,6 +70,9 @@ public final class GeometricRayLayer {
                         continue;
                     }
                     float intensity = MathUtils.clamp(strength / ((travelDistance * travelDistance * 0.08f) + 1f), 0.05f, 1f);
+                    if (Math.abs(nearestHit.y - FLOOR_Y) < 0.001f) {
+                        intensity *= MathUtils.clamp(1f - config.groundAbsorption, 0.05f, 1f);
+                    }
                     activeRays.add(new RayTraceSample(rayStart, nearestHit, intensity, strength, config.fadeOutSeconds));
                 } else {
                     if (resolveBounceDepth(maxDistance) > config.maxBounceDepth) {
@@ -111,7 +116,22 @@ public final class GeometricRayLayer {
             }
         }
 
+        if (config.groundEnabled && direction.y < -0.0001f) {
+            float floorDistance = distanceToFloor(rayStart, direction);
+            if (floorDistance > 0f && floorDistance <= maxDistance && floorDistance < nearestDistance) {
+                nearestHit = new Vector3(rayStart).mulAdd(direction, floorDistance);
+                nearestHit.y = FLOOR_Y;
+            }
+        }
+
         return nearestHit;
+    }
+
+    private float distanceToFloor(Vector3 origin, Vector3 direction) {
+        if (direction.y >= 0f) {
+            return Float.POSITIVE_INFINITY;
+        }
+        return (FLOOR_Y - origin.y) / direction.y;
     }
 
     private Vector3 fibonacciDirection(int index, int count) {

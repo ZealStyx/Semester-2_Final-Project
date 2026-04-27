@@ -2,6 +2,7 @@ package io.github.superteam.resonance.lwjgl3;
 
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration;
+import io.github.superteam.resonance.devTest.FilePicker;
 import io.github.superteam.resonance.Main;
 
 /** Launches the desktop (LWJGL3) application. */
@@ -12,7 +13,11 @@ public class Lwjgl3Launcher {
     }
 
     private static Lwjgl3Application createApplication() {
-        return new Lwjgl3Application(new Main(), getDefaultConfiguration());
+        FilePicker picker = callback ->
+            DesktopFilePicker.pickModelFile(file ->
+                com.badlogic.gdx.Gdx.app.postRunnable(() -> callback.accept(file == null ? null : file.getAbsolutePath()))
+            );
+        return new Lwjgl3Application(new Main(picker), getDefaultConfiguration());
     }
 
     private static Lwjgl3ApplicationConfiguration getDefaultConfiguration() {

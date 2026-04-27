@@ -42,6 +42,8 @@ public final class AcousticBounceConfig {
         public int rayCount = 36;
         public int maxBounceDepth = 2;
         public float rayMaxDistanceMeters = 30f;
+        public boolean groundEnabled = true;
+        public float groundAbsorption = 0.40f;
         public float bounceMarkerScale = 0.3f;
         public final Color bounceMarkerColor = new Color(1f, 1f, 0f, 0.8f);
         public float fadeOutSeconds = 3f;
@@ -50,6 +52,7 @@ public final class AcousticBounceConfig {
             rayCount = MathUtils.clamp(rayCount, 6, 128);
             maxBounceDepth = MathUtils.clamp(maxBounceDepth, 0, 3);
             rayMaxDistanceMeters = MathUtils.clamp(rayMaxDistanceMeters, 1f, 80f);
+            groundAbsorption = MathUtils.clamp(groundAbsorption, 0f, 1f);
             bounceMarkerScale = MathUtils.clamp(bounceMarkerScale, 0.05f, 2f);
             fadeOutSeconds = MathUtils.clamp(fadeOutSeconds, 0.2f, 10f);
         }

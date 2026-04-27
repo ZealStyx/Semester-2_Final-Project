@@ -10,14 +10,20 @@ import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.PerspectiveCamera;
+import com.badlogic.gdx.graphics.g3d.Model;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g3d.Environment;
 import com.badlogic.gdx.graphics.g3d.ModelBatch;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
+import com.badlogic.gdx.graphics.g3d.model.MeshPart;
 import com.badlogic.gdx.graphics.g3d.utils.CameraInputController;
+import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.utils.Array;
+import io.github.superteam.resonance.devTest.universal.MultiplayerTestMenuScreen;
 import io.github.superteam.resonance.model.ModelAssetManager;
 import io.github.superteam.resonance.model.ModelData;
 import io.github.superteam.resonance.model.ModelLoadException;
@@ -30,6 +36,7 @@ import java.util.Locale;
 public final class ModelDebugScreen extends ScreenAdapter {
 
     private static final String DEBUG_ASSET_KEY = "model-debug-primary";
+    private static final float TRANSFORM_STEP = 0.15f;
 
     private final PerspectiveCamera camera;
     private final CameraInputController cameraInputController;
@@ -37,9 +44,13 @@ public final class ModelDebugScreen extends ScreenAdapter {
     private final Environment environment;
     private final SpriteBatch spriteBatch;
     private final BitmapFont bitmapFont;
+    private final ShapeRenderer shapeRenderer;
+    private final FilePicker filePicker;
 
     private final ModelAssetManager modelAssetManager;
     private final Array<String> modelCandidates = new Array<>();
+    private final BoundingBox tmpBoundingBox = new BoundingBox();
+    private final Vector3 tmpDimensions = new Vector3();
 
     private SceneModel sceneModel;
     private int selectedModelIndex;
@@ -47,8 +58,21 @@ public final class ModelDebugScreen extends ScreenAdapter {
     private String statusMessage = "Ready";
     private String loadedPath = "<none>";
     private final StringBuilder animationInputBuffer = new StringBuilder();
+    private boolean showBoundingBox;
+    private boolean showPlayerReference;
+    private boolean filePickerBusy;
+
+    private float modelScale = 1f;
+    private float modelYawDegrees;
+    private final Vector3 modelPosition = new Vector3(0f, 0f, 0f);
 
     public ModelDebugScreen() {
+        this(FilePicker.NOOP);
+    }
+
+    public ModelDebugScreen(FilePicker filePicker) {
+        this.filePicker = filePicker == null ? FilePicker.NOOP : filePicker;
+
         camera = new PerspectiveCamera(67f, Math.max(1, Gdx.graphics.getWidth()), Math.max(1, Gdx.graphics.getHeight()));
         camera.position.set(2.8f, 2.1f, 2.8f);
         camera.lookAt(0f, 1f, 0f);
@@ -67,6 +91,7 @@ public final class ModelDebugScreen extends ScreenAdapter {
         spriteBatch = new SpriteBatch();
         bitmapFont = new BitmapFont();
         bitmapFont.setColor(Color.WHITE);
+        shapeRenderer = new ShapeRenderer();
 
         modelAssetManager = new ModelAssetManager();
         discoverModelCandidates();
@@ -100,6 +125,8 @@ public final class ModelDebugScreen extends ScreenAdapter {
             modelBatch.end();
         }
 
+        renderDebugGeometry();
+
         drawOverlay();
     }
 
@@ -119,6 +146,7 @@ public final class ModelDebugScreen extends ScreenAdapter {
         modelBatch.dispose();
         spriteBatch.dispose();
         bitmapFont.dispose();
+        shapeRenderer.dispose();
     }
 
     private InputAdapter createDebugInputAdapter() {
@@ -128,11 +156,14 @@ public final class ModelDebugScreen extends ScreenAdapter {
                 switch (keycode) {
                     case Input.Keys.ESCAPE:
                         if (Gdx.app.getApplicationListener() instanceof Game game) {
-                            game.setScreen(new PlayerTestScreen());
+                            game.setScreen(new MultiplayerTestMenuScreen());
                         }
                         return true;
                     case Input.Keys.M:
                         selectNextModel();
+                        return true;
+                    case Input.Keys.O:
+                        openFilePicker();
                         return true;
                     case Input.Keys.R:
                         reloadCurrentModel();
@@ -152,13 +183,80 @@ public final class ModelDebugScreen extends ScreenAdapter {
                     case Input.Keys.SPACE:
                         togglePauseResume();
                         return true;
+                    case Input.Keys.B:
+                        showBoundingBox = !showBoundingBox;
+                        statusMessage = "Bounding box: " + (showBoundingBox ? "ON" : "OFF");
+                        return true;
+                    case Input.Keys.F:
+                        showPlayerReference = !showPlayerReference;
+                        statusMessage = "Player reference: " + (showPlayerReference ? "ON" : "OFF");
+                        return true;
+                    case Input.Keys.T:
+                        modelScale = 1f;
+                        modelYawDegrees = 0f;
+                        modelPosition.setZero();
+                        applyTransform();
+                        statusMessage = "Transform reset.";
+                        return true;
+                    case Input.Keys.G:
+                        Gdx.app.log("ModelDebug", String.format(
+                            "Position: (%.3f, %.3f, %.3f) Scale: %.3f Yaw: %.2f",
+                            modelPosition.x,
+                            modelPosition.y,
+                            modelPosition.z,
+                            modelScale,
+                            modelYawDegrees
+                        ));
+                        statusMessage = "Transform printed to log.";
+                        return true;
+                    case Input.Keys.PLUS:
+                    case Input.Keys.EQUALS:
+                        modelScale = Math.min(modelScale * 1.1f, 100f);
+                        applyTransform();
+                        statusMessage = String.format("Scale: %.2f", modelScale);
+                        return true;
+                    case Input.Keys.MINUS:
+                        modelScale = Math.max(modelScale * 0.9f, 0.001f);
+                        applyTransform();
+                        statusMessage = String.format("Scale: %.2f", modelScale);
+                        return true;
+                    case Input.Keys.LEFT:
+                        modelPosition.x -= TRANSFORM_STEP;
+                        applyTransform();
+                        statusMessage = String.format("Position: (%.2f, %.2f, %.2f)", modelPosition.x, modelPosition.y, modelPosition.z);
+                        return true;
+                    case Input.Keys.RIGHT:
+                        modelPosition.x += TRANSFORM_STEP;
+                        applyTransform();
+                        statusMessage = String.format("Position: (%.2f, %.2f, %.2f)", modelPosition.x, modelPosition.y, modelPosition.z);
+                        return true;
+                    case Input.Keys.UP:
+                        modelPosition.y += TRANSFORM_STEP;
+                        applyTransform();
+                        statusMessage = String.format("Position: (%.2f, %.2f, %.2f)", modelPosition.x, modelPosition.y, modelPosition.z);
+                        return true;
+                    case Input.Keys.DOWN:
+                        modelPosition.y -= TRANSFORM_STEP;
+                        applyTransform();
+                        statusMessage = String.format("Position: (%.2f, %.2f, %.2f)", modelPosition.x, modelPosition.y, modelPosition.z);
+                        return true;
+                    case Input.Keys.Q:
+                        modelYawDegrees -= 7.5f;
+                        applyTransform();
+                        statusMessage = String.format("Yaw: %.1f", modelYawDegrees);
+                        return true;
+                    case Input.Keys.E:
+                        modelYawDegrees += 7.5f;
+                        applyTransform();
+                        statusMessage = String.format("Yaw: %.1f", modelYawDegrees);
+                        return true;
                     case Input.Keys.BACKSPACE:
                         if (animationInputBuffer.length() > 0) {
                             animationInputBuffer.deleteCharAt(animationInputBuffer.length() - 1);
                         }
                         return true;
                     default:
-                        return false;
+                        return trySelectIndexShortcut(keycode);
                 }
             }
 
@@ -174,6 +272,28 @@ public final class ModelDebugScreen extends ScreenAdapter {
                 return true;
             }
         };
+    }
+
+    private boolean trySelectIndexShortcut(int keycode) {
+        int index = -1;
+        if (keycode >= Input.Keys.NUM_0 && keycode <= Input.Keys.NUM_9) {
+            index = keycode - Input.Keys.NUM_0;
+        } else if (keycode >= Input.Keys.NUMPAD_0 && keycode <= Input.Keys.NUMPAD_9) {
+            index = keycode - Input.Keys.NUMPAD_0;
+        }
+
+        if (index < 0) {
+            return false;
+        }
+        if (index >= modelCandidates.size) {
+            statusMessage = "No model at index " + index;
+            return true;
+        }
+
+        selectedModelIndex = index;
+        selectedAnimationIndex = 0;
+        loadSelectedModel();
+        return true;
     }
 
     private void discoverModelCandidates() {
@@ -232,6 +352,11 @@ public final class ModelDebugScreen extends ScreenAdapter {
     }
 
     private void loadSelectedModel() {
+        if (modelCandidates.isEmpty()) {
+            statusMessage = "No model candidates available.";
+            return;
+        }
+
         String selectedPath = modelCandidates.get(selectedModelIndex);
 
         try {
@@ -239,7 +364,7 @@ public final class ModelDebugScreen extends ScreenAdapter {
             ModelData modelData = modelAssetManager.load(DEBUG_ASSET_KEY, selectedPath);
 
             sceneModel = new SceneModel(modelData);
-            sceneModel.setPosition(0f, 0f, 0f);
+            applyTransform();
 
             loadedPath = modelData.sourcePath();
             statusMessage = "Loaded model: " + selectedPath;
@@ -264,11 +389,35 @@ public final class ModelDebugScreen extends ScreenAdapter {
         try {
             ModelData reloadedData = modelAssetManager.reload(DEBUG_ASSET_KEY);
             sceneModel = new SceneModel(reloadedData);
-            sceneModel.setPosition(0f, 0f, 0f);
+            applyTransform();
             statusMessage = "Reloaded: " + reloadedData.sourcePath();
         } catch (ModelLoadException exception) {
             statusMessage = "Reload failed: " + exception.getMessage();
         }
+    }
+
+    private void openFilePicker() {
+        if (filePickerBusy) {
+            statusMessage = "File picker already open...";
+            return;
+        }
+
+        filePickerBusy = true;
+        statusMessage = "Opening file picker...";
+
+        filePicker.open(absolutePath -> {
+            filePickerBusy = false;
+
+            if (absolutePath == null || absolutePath.isBlank()) {
+                statusMessage = "File picker cancelled.";
+                return;
+            }
+
+            addCandidatePath(absolutePath);
+            selectedModelIndex = modelCandidates.size - 1;
+            selectedAnimationIndex = 0;
+            loadSelectedModel();
+        });
     }
 
     private void selectNextAnimation() {
@@ -373,15 +522,26 @@ public final class ModelDebugScreen extends ScreenAdapter {
     private void drawOverlay() {
         spriteBatch.begin();
 
-        float x = 14f;
-        float y = Gdx.graphics.getHeight() - 14f;
+        float topY = Gdx.graphics.getHeight() - 14f;
         float line = 18f;
+        float leftX = 14f;
+        float rightX = Math.max(14f, Gdx.graphics.getWidth() - 340f);
 
+        drawLeftPanel(leftX, topY, line);
+        drawRightPanel(rightX, topY, line);
+
+        spriteBatch.end();
+    }
+
+    private void drawLeftPanel(float x, float y, float line) {
+        bitmapFont.setColor(Color.WHITE);
         bitmapFont.draw(spriteBatch, "Model Debug Screen", x, y);
         y -= line;
         bitmapFont.draw(spriteBatch, "Loaded Path: " + loadedPath, x, y);
         y -= line;
         bitmapFont.draw(spriteBatch, "Status: " + statusMessage, x, y);
+        y -= line;
+        bitmapFont.draw(spriteBatch, buildModelInfoLine(), x, y);
         y -= line;
         bitmapFont.draw(spriteBatch, "Typed Animation: " + animationInputBuffer, x, y);
         y -= line;
@@ -392,25 +552,145 @@ public final class ModelDebugScreen extends ScreenAdapter {
         }
         bitmapFont.draw(spriteBatch, "Current Animation: " + currentAnimation, x, y);
         y -= line;
-
-        bitmapFont.draw(spriteBatch, "Controls: M next model | R reload | N/P select clip", x, y);
+        bitmapFont.draw(spriteBatch, String.format("Transform pos=(%.2f, %.2f, %.2f) scale=%.2f yaw=%.1f",
+            modelPosition.x, modelPosition.y, modelPosition.z, modelScale, modelYawDegrees), x, y);
         y -= line;
-        bitmapFont.draw(spriteBatch, "Enter play | C cross-fade | Space pause/resume | ESC back", x, y);
+
+        bitmapFont.setColor(Color.LIGHT_GRAY);
+        bitmapFont.draw(spriteBatch, "Controls: O open | M next | R reload | N/P animations", x, y);
+        y -= line;
+        bitmapFont.draw(spriteBatch, "Enter play | C fade | Space pause | B bbox | F player ref", x, y);
+        y -= line;
+        bitmapFont.draw(spriteBatch, "+/- scale | Arrows move | Q/E rotate | T reset | G log", x, y);
         y -= line;
 
         if (sceneModel != null) {
             Array<String> animationNames = sceneModel.modelData().getAnimationNames();
+            bitmapFont.setColor(Color.WHITE);
             bitmapFont.draw(spriteBatch, "Animations (" + animationNames.size + "):", x, y);
             y -= line;
 
-            int maxLines = Math.min(10, animationNames.size);
+            int maxLines = Math.min(12, animationNames.size);
             for (int index = 0; index < maxLines; index++) {
-                String marker = index == selectedAnimationIndex ? "> " : "  ";
-                bitmapFont.draw(spriteBatch, marker + animationNames.get(index), x + 10f, y);
+                boolean active = index == selectedAnimationIndex;
+                bitmapFont.setColor(active ? Color.CYAN : Color.LIGHT_GRAY);
+                String marker = active ? "> " : "  ";
+                bitmapFont.draw(spriteBatch, marker + "[" + index + "] " + animationNames.get(index), x + 8f, y);
                 y -= line;
             }
         }
+    }
 
-        spriteBatch.end();
+    private void drawRightPanel(float x, float y, float line) {
+        bitmapFont.setColor(Color.LIGHT_GRAY);
+        bitmapFont.draw(spriteBatch, "-- Model List --", x, y);
+        y -= line;
+
+        int displayMax = Math.min(modelCandidates.size, 20);
+        for (int i = 0; i < displayMax; i++) {
+            String path = modelCandidates.get(i);
+            String name = fileNameOnly(path);
+            boolean active = i == selectedModelIndex;
+            bitmapFont.setColor(active ? Color.CYAN : Color.LIGHT_GRAY);
+            String marker = active ? "> " : "  ";
+            bitmapFont.draw(spriteBatch, marker + "[" + i + "] " + name, x, y);
+            y -= line;
+        }
+
+        if (modelCandidates.size > displayMax) {
+            bitmapFont.setColor(Color.GRAY);
+            bitmapFont.draw(spriteBatch, "  ...+" + (modelCandidates.size - displayMax) + " more", x, y);
+            y -= line;
+        }
+
+        y -= line;
+        bitmapFont.setColor(Color.YELLOW);
+        bitmapFont.draw(spriteBatch, "O = open file", x, y);
+        y -= line;
+        bitmapFont.draw(spriteBatch, "0-9 = jump index", x, y);
+        y -= line;
+        bitmapFont.draw(spriteBatch, "M = next | ESC = back", x, y);
+    }
+
+    private void renderDebugGeometry() {
+        if (sceneModel == null && !showPlayerReference) {
+            return;
+        }
+
+        shapeRenderer.setProjectionMatrix(camera.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+
+        if (sceneModel != null && showBoundingBox) {
+            sceneModel.modelInstance().calculateBoundingBox(tmpBoundingBox);
+            shapeRenderer.setColor(Color.YELLOW);
+            shapeRenderer.box(
+                tmpBoundingBox.min.x,
+                tmpBoundingBox.min.y,
+                tmpBoundingBox.min.z,
+                tmpBoundingBox.getWidth(),
+                tmpBoundingBox.getHeight(),
+                tmpBoundingBox.getDepth()
+            );
+        }
+
+        if (showPlayerReference) {
+            shapeRenderer.setColor(Color.GREEN);
+            shapeRenderer.box(-0.3f, 0f, -0.15f, 0.6f, 1.8f, 0.3f);
+        }
+
+        shapeRenderer.end();
+    }
+
+    private String buildModelInfoLine() {
+        if (sceneModel == null) {
+            return "Verts: 0  Tris: 0  Nodes: 0  Mat: 0  Size: 0.0x0.0x0.0";
+        }
+
+        Model model = sceneModel.modelData().model();
+        int triangles = 0;
+        for (MeshPart meshPart : model.meshParts) {
+            triangles += meshPart.size / 3;
+        }
+
+        int vertices = 0;
+        for (com.badlogic.gdx.graphics.Mesh mesh : model.meshes) {
+            vertices += mesh.getNumVertices();
+        }
+
+        sceneModel.modelInstance().calculateBoundingBox(tmpBoundingBox);
+        tmpBoundingBox.getDimensions(tmpDimensions);
+
+        return String.format(
+            "Verts: %d  Tris: %d  Nodes: %d  Mat: %d  Size: %.1fx%.1fx%.1f",
+            vertices,
+            triangles,
+            model.nodes.size,
+            model.materials.size,
+            tmpDimensions.x,
+            tmpDimensions.y,
+            tmpDimensions.z
+        );
+    }
+
+    private void applyTransform() {
+        if (sceneModel == null) {
+            return;
+        }
+
+        sceneModel.modelInstance().transform.idt();
+        sceneModel.modelInstance().transform.translate(modelPosition);
+        sceneModel.modelInstance().transform.rotate(Vector3.Y, modelYawDegrees);
+        sceneModel.modelInstance().transform.scale(modelScale, modelScale, modelScale);
+    }
+
+    private String fileNameOnly(String path) {
+        if (path == null || path.isBlank()) {
+            return "<unknown>";
+        }
+        int slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        if (slash < 0 || slash + 1 >= path.length()) {
+            return path;
+        }
+        return path.substring(slash + 1);
     }
 }

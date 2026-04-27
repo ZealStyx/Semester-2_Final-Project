@@ -77,8 +77,8 @@ public final class DiagnosticOverlay {
             }
         } else {
             font.draw(batch, "WASD move | Shift run | Ctrl slow | C crouch | Space jump", x, y - line);
-            font.draw(batch, "F10 from PlayerTestScreen enters this shell", x, y - (line * 2.0f));
-            font.draw(batch, "F9 back to PlayerTestScreen", x, y - (line * 3.0f));
+            font.draw(batch, "F10 reloads this scene", x, y - (line * 2.0f));
+            font.draw(batch, "F9 opens multiplayer menu", x, y - (line * 3.0f));
         }
 
         batch.end();
