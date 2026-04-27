@@ -28,6 +28,32 @@
           "type": "PLAY_SOUND",
           "soundPath": "audio/sfx/env/test.wav",
           "volume": 0.6
+        },
+        {
+          "type": "FIRE_EVENT",
+          "eventId": "zone-enter-sound-followup"
+        }
+      ]
+    },
+    {
+      "id": "zone-enter-sound-followup",
+      "displayName": "Sound Zone Followup",
+      "repeatMode": "ONCE_PER_SESSION",
+      "cooldownSeconds": 0.0,
+      "actions": [
+        {
+          "type": "WAIT",
+          "delaySeconds": 0.35
+        },
+        {
+          "type": "SHOW_SUBTITLE",
+          "text": "The room resonates with a distant hum...",
+          "duration": 2.8
+        },
+        {
+          "type": "SET_FLAG",
+          "flagName": "zone.sound.chain.completed",
+          "value": true
         }
       ]
     }

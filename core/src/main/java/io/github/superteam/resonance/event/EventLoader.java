@@ -4,8 +4,11 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
+import io.github.superteam.resonance.event.actions.FireEventAction;
 import io.github.superteam.resonance.event.actions.PlaySoundAction;
 import io.github.superteam.resonance.event.actions.SetFlagAction;
+import io.github.superteam.resonance.event.actions.ShowSubtitleAction;
+import io.github.superteam.resonance.event.actions.WaitAction;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -93,6 +96,16 @@ public final class EventLoader {
             case "PLAY_SOUND" -> new PlaySoundAction(
                 actionValue.getString("soundPath", actionValue.getString("path", null)),
                 actionValue.getFloat("volume", 1.0f)
+            );
+            case "FIRE_EVENT" -> new FireEventAction(
+                actionValue.getString("eventId", actionValue.getString("targetEvent", null))
+            );
+            case "WAIT" -> new WaitAction(
+                actionValue.getFloat("delaySeconds", 0f)
+            );
+            case "SHOW_SUBTITLE" -> new ShowSubtitleAction(
+                actionValue.getString("text", null),
+                actionValue.getFloat("duration", actionValue.getFloat("durationSeconds", 2f))
             );
             default -> null;
         };

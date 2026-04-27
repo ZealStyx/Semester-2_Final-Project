@@ -246,6 +246,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final DirectorController directorController;
     private final SimplePanicModel panicModel = new SimplePanicModel();
     private final BlindFogUniformUpdater blindFogUniformUpdater = new BlindFogUniformUpdater();
+    private EventTriggerRuntime eventTriggerRuntime;
 
     private final java.util.EnumMap<ItemType, Mesh> viewModelMeshes = new java.util.EnumMap<>(ItemType.class);
     private Mesh playerViewModelMesh;
@@ -275,6 +276,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final float[] micRmsHistory = new float[MIC_HISTORY_SIZE];
 
     private float elapsedSeconds;
+    private float runtimeSubtitleRemaining;
     private float currentFov = BASE_FOV;
     private float revealedFlashRemaining;
     private float lastSoundIntensity;
@@ -290,6 +292,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private boolean micEnabled;
     private boolean breathingApplied;
     private String lastItemDestroyedMessage;
+    private String runtimeSubtitleText;
     private String cachedNearestNodeId = "center";
     private MultiplayerManager multiplayerManager;
     private VoiceCaptureSystem voiceCapture;
@@ -369,6 +372,10 @@ public final class UniversalTestScene extends ScreenAdapter {
                 new SonarRenderer(),
                 spatialCueController,
                 SoundBalancingConfigStore.loadOrDefault("config/balancing_config.json"));
+        eventTriggerRuntime = EventTriggerRuntime.loadDefaults(
+            "config/events.json",
+            "config/triggers.json",
+            this::showRuntimeSubtitle);
 
         physicsNoiseEmitter = new PhysicsNoiseEmitter(soundPropagationOrchestrator);
         impactListener = new ImpactListener(physicsNoiseEmitter, this::findNearestNodeId);
@@ -905,7 +912,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         // F9  — Switch to multiplayer menu
         // F10 — Switch to UniversalTestScene
         // F11 — Switch to GltfMapTestScene
-        // F12 — Unused (reserved)
+        // F12 — Fire debug event flag
         if (Gdx.input.isKeyJustPressed(Input.Keys.F1)) {
             showGraphDebug = !showGraphDebug;
         }
@@ -971,6 +978,9 @@ public final class UniversalTestScene extends ScreenAdapter {
                 return true;
             }
         }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F12)) {
+            fireDebugEventFlag();
+        }
 
         // Remove runtime multiplayer debug shortcuts; H/C are reserved for menu and crouch.
 
@@ -988,15 +998,26 @@ public final class UniversalTestScene extends ScreenAdapter {
         stepPhysicsWorld(deltaSeconds);
         updateActiveZone(deltaSeconds);
 
+        playerController.getPosition(playerPos);
+        if (eventTriggerRuntime != null) {
+            eventTriggerRuntime.update(deltaSeconds, playerPos, elapsedSeconds, soundPropagationOrchestrator);
+        }
+
         playerFeatureExtractor.update(deltaSeconds, playerController);
         playerFootstepSoundEmitter.update(deltaSeconds, elapsedSeconds);
         soundPropagationOrchestrator.update(deltaSeconds);
         updateSonarRevealSnapshot();
         handleMicInput(deltaSeconds);
 
-        playerController.getPosition(playerPos);
         String listenerNodeId = findNearestNodeId(playerPos);
         spatialCueController.setListenerNode(listenerNodeId, playerPos);
+
+        if (runtimeSubtitleRemaining > 0f) {
+            runtimeSubtitleRemaining = Math.max(0f, runtimeSubtitleRemaining - deltaSeconds);
+            if (runtimeSubtitleRemaining <= 0f) {
+                runtimeSubtitleText = null;
+            }
+        }
 
         // Fix H — move the atmospheric mist emitter to the player's current feet
         // position each frame.
@@ -1392,6 +1413,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         drawControlsLegend();
 
         drawInteractionPrompt(focusedCarriable, focusedConsumable);
+        drawRuntimeSubtitle();
         diagnosticOverlay.draw(
                 hudBatch,
                 hudFont,
@@ -1411,6 +1433,22 @@ public final class UniversalTestScene extends ScreenAdapter {
                 multiplayerManager);
 
             renderJoinBanners();
+    }
+
+    private void drawRuntimeSubtitle() {
+        if (runtimeSubtitleRemaining <= 0f || runtimeSubtitleText == null || runtimeSubtitleText.isBlank()) {
+            return;
+        }
+
+        float alpha = MathUtils.clamp(runtimeSubtitleRemaining / 0.6f, 0f, 1f);
+        float y = Math.max(96f, Gdx.graphics.getHeight() * 0.24f);
+        float x = (Gdx.graphics.getWidth() * 0.5f) - (runtimeSubtitleText.length() * 2.95f);
+
+        hudBatch.begin();
+        hudFont.setColor(0.93f, 0.97f, 1.0f, alpha);
+        hudFont.draw(hudBatch, runtimeSubtitleText, x, y);
+        hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
+        hudBatch.end();
     }
 
     private void drainJoinBanners() {
@@ -1716,7 +1754,10 @@ public final class UniversalTestScene extends ScreenAdapter {
         String line6 = "Crouch tunnel: (" + (int) HUB_X + ", " + (int) (HUB_Z - 16f) + ")  Sound zone: ("
             + (int) HUB_X + ", " + (int) (HUB_Z + 16f) + ")  Blind zone: (" + (int) HUB_X + ", "
             + (int) (HUB_Z + 32f) + ")";
-        String line7 = directorController.snapshot().hudLine();
+        String line7 = "[F12] Debug event flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("debug.event.flag") ? "ON" : "OFF");
+        String line8 = "[Zone] Sound event flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("zone.sound.entered") ? "ON" : "OFF");
+        String line9 = "[Zone] Event chain flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("zone.sound.chain.completed") ? "ON" : "OFF");
+        String line10 = directorController.snapshot().hudLine();
 
         float padding = 12.0f;
         float lineHeight = 14.0f;
@@ -1725,7 +1766,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         float textWidth = Math.max(
                 hudFont.getRegion().getRegionWidth(),
                 Math.max(line1.length(), Math.max(line2.length(),
-                    Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), Math.max(line6.length(), line7.length()))))))
+                    Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), Math.max(line6.length(), Math.max(line7.length(), Math.max(line8.length(), Math.max(line9.length(), line10.length())))))))))
                         * 6.2f);
         float startX = Gdx.graphics.getWidth() - textWidth - 16.0f;
 
@@ -1738,8 +1779,33 @@ public final class UniversalTestScene extends ScreenAdapter {
         hudFont.draw(hudBatch, line5, startX, startY - (lineHeight * 4f));
         hudFont.draw(hudBatch, line6, startX, startY - (lineHeight * 5f));
         hudFont.draw(hudBatch, line7, startX, startY - (lineHeight * 6f));
+        hudFont.draw(hudBatch, line8, startX, startY - (lineHeight * 7f));
+        hudFont.draw(hudBatch, line9, startX, startY - (lineHeight * 8f));
+        hudFont.draw(hudBatch, line10, startX, startY - (lineHeight * 9f));
         hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
         hudBatch.end();
+    }
+
+    private void showRuntimeSubtitle(String text, float durationSeconds) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        runtimeSubtitleText = text;
+        runtimeSubtitleRemaining = Math.max(0.1f, durationSeconds);
+    }
+
+    private void fireDebugEventFlag() {
+        playerController.getPosition(playerPos);
+        fireEventById("debug-set-flag", playerPos);
+    }
+
+    private void fireEventById(String eventId, Vector3 triggerPosition) {
+        if (eventTriggerRuntime == null || eventId == null || eventId.isBlank()) {
+            return;
+        }
+
+        Vector3 resolvedTrigger = triggerPosition == null ? playerPos : triggerPosition;
+        eventTriggerRuntime.fireEvent(eventId, resolvedTrigger, playerPos, elapsedSeconds, soundPropagationOrchestrator);
     }
 
     private void renderAcousticGraphWorldMarkers() {
@@ -2637,6 +2703,10 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
         if (spatialCueController != null) {
             spatialCueController.dispose();
+        }
+        if (eventTriggerRuntime != null) {
+            eventTriggerRuntime.dispose();
+            eventTriggerRuntime = null;
         }
         if (physicsWorld != null) {
             physicsWorld.dispose();

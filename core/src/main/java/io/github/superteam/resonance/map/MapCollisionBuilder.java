@@ -9,6 +9,10 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.FloatArray;
+import com.badlogic.gdx.physics.bullet.collision.btBvhTriangleMeshShape;
+import com.badlogic.gdx.physics.bullet.collision.btTriangleMesh;
+import com.badlogic.gdx.physics.bullet.dynamics.btRigidBody;
+import com.badlogic.gdx.physics.bullet.linearmath.btDefaultMotionState;
 import io.github.superteam.resonance.model.ModelData;
 
 /**
@@ -119,6 +123,90 @@ public final class MapCollisionBuilder {
         return new CollisionData(colliders, triangleSnapshot.toArray());
     }
 
+    public static BvhCollisionData buildBvh(ModelData mapData, float mapScale, float mapYOffset) {
+        Model model = mapData == null ? null : mapData.model();
+        if (model == null || model.meshParts == null || model.meshParts.size == 0) {
+            return null;
+        }
+
+        btTriangleMesh triangleMesh = new btTriangleMesh();
+        FloatArray triangleSnapshot = new FloatArray();
+        Vector3 v0 = new Vector3();
+        Vector3 v1 = new Vector3();
+        Vector3 v2 = new Vector3();
+        int triangleCount = 0;
+
+        for (MeshPart meshPart : model.meshParts) {
+            if (meshPart == null || meshPart.mesh == null || meshPart.size <= 0) {
+                continue;
+            }
+
+            Mesh mesh = meshPart.mesh;
+            VertexAttribute positionAttr = mesh.getVertexAttribute(VertexAttributes.Usage.Position);
+            if (positionAttr == null) {
+                continue;
+            }
+
+            int strideFloats = mesh.getVertexSize() / 4;
+            int positionOffset = positionAttr.offset / 4;
+            float[] vertices = new float[mesh.getNumVertices() * strideFloats];
+            short[] indices = new short[mesh.getNumIndices()];
+            mesh.getVertices(vertices);
+            mesh.getIndices(indices);
+
+            int start = Math.max(0, meshPart.offset);
+            int end = Math.min(indices.length, start + meshPart.size);
+            for (int i = start; i + 2 < end; i += 3) {
+                int index0 = indices[i] & 0xFFFF;
+                int index1 = indices[i + 1] & 0xFFFF;
+                int index2 = indices[i + 2] & 0xFFFF;
+
+                int base0 = (index0 * strideFloats) + positionOffset;
+                int base1 = (index1 * strideFloats) + positionOffset;
+                int base2 = (index2 * strideFloats) + positionOffset;
+                if (base0 + 2 >= vertices.length || base1 + 2 >= vertices.length || base2 + 2 >= vertices.length) {
+                    continue;
+                }
+
+                v0.set(vertices[base0] * mapScale, (vertices[base0 + 1] * mapScale) + mapYOffset, vertices[base0 + 2] * mapScale);
+                v1.set(vertices[base1] * mapScale, (vertices[base1 + 1] * mapScale) + mapYOffset, vertices[base1 + 2] * mapScale);
+                v2.set(vertices[base2] * mapScale, (vertices[base2 + 1] * mapScale) + mapYOffset, vertices[base2 + 2] * mapScale);
+
+                triangleMesh.addTriangle(v0, v1, v2, true);
+                triangleSnapshot.addAll(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
+                triangleCount++;
+            }
+        }
+
+        if (triangleCount == 0) {
+            triangleMesh.dispose();
+            return null;
+        }
+
+        btBvhTriangleMeshShape shape = new btBvhTriangleMeshShape(triangleMesh, true, true);
+        btDefaultMotionState motionState = new btDefaultMotionState();
+        btRigidBody.btRigidBodyConstructionInfo constructionInfo =
+            new btRigidBody.btRigidBodyConstructionInfo(0f, motionState, shape, Vector3.Zero);
+        btRigidBody rigidBody = new btRigidBody(constructionInfo);
+        constructionInfo.dispose();
+        return new BvhCollisionData(triangleMesh, shape, motionState, rigidBody, triangleSnapshot.toArray());
+    }
+
     public record CollisionData(Array<BoundingBox> colliders, float[] debugTriangles) {
+    }
+
+    public record BvhCollisionData(
+        btTriangleMesh triMesh,
+        btBvhTriangleMeshShape shape,
+        btDefaultMotionState motionState,
+        btRigidBody body,
+        float[] debugTriangles
+    ) {
+        public void dispose() {
+            body.dispose();
+            motionState.dispose();
+            shape.dispose();
+            triMesh.dispose();
+        }
     }
 }

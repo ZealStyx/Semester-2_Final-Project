@@ -58,11 +58,6 @@ import io.github.superteam.resonance.devTest.universal.zones.ParticleArenaZone;
 import io.github.superteam.resonance.devTest.universal.zones.RampStairsZone;
 import io.github.superteam.resonance.devTest.universal.zones.ShaderCorridorZone;
 import io.github.superteam.resonance.devTest.universal.zones.SoundPropagationZone;
-import io.github.superteam.resonance.event.EventContext;
-import io.github.superteam.resonance.event.EventBus;
-import io.github.superteam.resonance.event.EventLoader;
-import io.github.superteam.resonance.event.EventState;
-import io.github.superteam.resonance.audio.GameAudioSystem;
 import io.github.superteam.resonance.map.MapCollisionBuilder;
 import io.github.superteam.resonance.items.CarriableItem;
 import io.github.superteam.resonance.items.ItemDefinition;
@@ -271,7 +266,7 @@ public final class GltfMapTestScene extends ScreenAdapter {
     private final DirectorController directorController;
     private final SimplePanicModel panicModel = new SimplePanicModel();
     private final BlindFogUniformUpdater blindFogUniformUpdater = new BlindFogUniformUpdater();
-    private final EventState eventState = new EventState();
+    private EventTriggerRuntime eventTriggerRuntime;
 
     private final java.util.EnumMap<ItemType, Mesh> viewModelMeshes = new java.util.EnumMap<>(ItemType.class);
     private Mesh playerViewModelMesh;
@@ -288,8 +283,6 @@ public final class GltfMapTestScene extends ScreenAdapter {
     private AcousticGraphEngine acousticGraphEngine;
     private SoundPropagationOrchestrator soundPropagationOrchestrator;
     private SpatialCueController spatialCueController;
-    private EventBus eventBus;
-    private GameAudioSystem eventAudioSystem;
     private PlayerFootstepSoundEmitter playerFootstepSoundEmitter;
     private PlayerFeatureExtractor playerFeatureExtractor;
     private PhysicsNoiseEmitter physicsNoiseEmitter;
@@ -303,6 +296,7 @@ public final class GltfMapTestScene extends ScreenAdapter {
     private final float[] micRmsHistory = new float[MIC_HISTORY_SIZE];
 
     private float elapsedSeconds;
+    private float runtimeSubtitleRemaining;
     private float currentFov = BASE_FOV;
     private float revealedFlashRemaining;
     private float lastSoundIntensity;
@@ -318,6 +312,7 @@ public final class GltfMapTestScene extends ScreenAdapter {
     private boolean micEnabled;
     private boolean breathingApplied;
     private String lastItemDestroyedMessage;
+    private String runtimeSubtitleText;
     private String cachedNearestNodeId = "center";
     private MultiplayerManager multiplayerManager;
     private VoiceCaptureSystem voiceCapture;
@@ -400,8 +395,10 @@ public final class GltfMapTestScene extends ScreenAdapter {
                 new SonarRenderer(),
                 spatialCueController,
                 SoundBalancingConfigStore.loadOrDefault("config/balancing_config.json"));
-        eventBus = EventLoader.loadOrDefault("config/events.json");
-        eventAudioSystem = new GameAudioSystem();
+        eventTriggerRuntime = EventTriggerRuntime.loadDefaults(
+            "config/events.json",
+            "config/triggers.json",
+            this::showRuntimeSubtitle);
 
         physicsNoiseEmitter = new PhysicsNoiseEmitter(soundPropagationOrchestrator);
         impactListener = new ImpactListener(physicsNoiseEmitter, this::findNearestNodeId);
@@ -1097,18 +1094,26 @@ public final class GltfMapTestScene extends ScreenAdapter {
         stepPhysicsWorld(deltaSeconds);
         updateActiveZone(deltaSeconds);
 
+        playerController.getPosition(playerPos);
+        if (eventTriggerRuntime != null) {
+            eventTriggerRuntime.update(deltaSeconds, playerPos, elapsedSeconds, soundPropagationOrchestrator);
+        }
+
         playerFeatureExtractor.update(deltaSeconds, playerController);
         playerFootstepSoundEmitter.update(deltaSeconds, elapsedSeconds);
         soundPropagationOrchestrator.update(deltaSeconds);
-        if (eventBus != null) {
-            eventBus.update(deltaSeconds);
-        }
         updateSonarRevealSnapshot();
         handleMicInput(deltaSeconds);
 
-        playerController.getPosition(playerPos);
         String listenerNodeId = findNearestNodeId(playerPos);
         spatialCueController.setListenerNode(listenerNodeId, playerPos);
+
+        if (runtimeSubtitleRemaining > 0f) {
+            runtimeSubtitleRemaining = Math.max(0f, runtimeSubtitleRemaining - deltaSeconds);
+            if (runtimeSubtitleRemaining <= 0f) {
+                runtimeSubtitleText = null;
+            }
+        }
 
         // Fix H — move the atmospheric mist emitter to the player's current feet
         // position each frame.
@@ -1236,9 +1241,6 @@ public final class GltfMapTestScene extends ScreenAdapter {
             // IMPROVE-08 — soft acoustic ping on zone enter: reveals new zone nodes and
             // hints to Director.
             emitItemEvent(SoundEvent.FOOTSTEP, playerPos, 0.15f);
-            if (activeZone instanceof SoundPropagationZone) {
-                fireEventById("zone-enter-sound-propagation", playerPos);
-            }
         }
 
         if (activeZone != null) {
@@ -1518,6 +1520,7 @@ public final class GltfMapTestScene extends ScreenAdapter {
         drawControlsLegend();
 
         drawInteractionPrompt(focusedCarriable, focusedConsumable);
+        drawRuntimeSubtitle();
         diagnosticOverlay.draw(
                 hudBatch,
                 hudFont,
@@ -1537,6 +1540,22 @@ public final class GltfMapTestScene extends ScreenAdapter {
                 multiplayerManager);
 
             renderJoinBanners();
+    }
+
+    private void drawRuntimeSubtitle() {
+        if (runtimeSubtitleRemaining <= 0f || runtimeSubtitleText == null || runtimeSubtitleText.isBlank()) {
+            return;
+        }
+
+        float alpha = MathUtils.clamp(runtimeSubtitleRemaining / 0.6f, 0f, 1f);
+        float y = Math.max(96f, Gdx.graphics.getHeight() * 0.24f);
+        float x = (Gdx.graphics.getWidth() * 0.5f) - (runtimeSubtitleText.length() * 2.95f);
+
+        hudBatch.begin();
+        hudFont.setColor(0.93f, 0.97f, 1.0f, alpha);
+        hudFont.draw(hudBatch, runtimeSubtitleText, x, y);
+        hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
+        hudBatch.end();
     }
 
     private void drainJoinBanners() {
@@ -1842,9 +1861,10 @@ public final class GltfMapTestScene extends ScreenAdapter {
         String line6 = "Crouch tunnel: (" + (int) HUB_X + ", " + (int) (HUB_Z - 16f) + ")  Sound zone: ("
             + (int) HUB_X + ", " + (int) (HUB_Z + 16f) + ")  Blind zone: (" + (int) HUB_X + ", "
             + (int) (HUB_Z + 32f) + ")";
-        String line7 = "[F12] Debug event flag: " + (eventState.getFlag("debug.event.flag") ? "ON" : "OFF");
-        String line8 = "[Zone] Sound event flag: " + (eventState.getFlag("zone.sound.entered") ? "ON" : "OFF");
-        String line9 = directorController.snapshot().hudLine();
+        String line7 = "[F12] Debug event flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("debug.event.flag") ? "ON" : "OFF");
+        String line8 = "[Zone] Sound event flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("zone.sound.entered") ? "ON" : "OFF");
+        String line9 = "[Zone] Event chain flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("zone.sound.chain.completed") ? "ON" : "OFF");
+        String line10 = directorController.snapshot().hudLine();
 
         float padding = 12.0f;
         float lineHeight = 14.0f;
@@ -1853,7 +1873,7 @@ public final class GltfMapTestScene extends ScreenAdapter {
         float textWidth = Math.max(
                 hudFont.getRegion().getRegionWidth(),
                 Math.max(line1.length(), Math.max(line2.length(),
-                    Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), Math.max(line6.length(), Math.max(line7.length(), Math.max(line8.length(), line9.length()))))))))
+                    Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), Math.max(line6.length(), Math.max(line7.length(), Math.max(line8.length(), Math.max(line9.length(), line10.length())))))))))
                         * 6.2f);
         float startX = Gdx.graphics.getWidth() - textWidth - 16.0f;
 
@@ -1868,8 +1888,17 @@ public final class GltfMapTestScene extends ScreenAdapter {
         hudFont.draw(hudBatch, line7, startX, startY - (lineHeight * 6f));
         hudFont.draw(hudBatch, line8, startX, startY - (lineHeight * 7f));
         hudFont.draw(hudBatch, line9, startX, startY - (lineHeight * 8f));
+        hudFont.draw(hudBatch, line10, startX, startY - (lineHeight * 9f));
         hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
         hudBatch.end();
+    }
+
+    private void showRuntimeSubtitle(String text, float durationSeconds) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        runtimeSubtitleText = text;
+        runtimeSubtitleRemaining = Math.max(0.1f, durationSeconds);
     }
 
     private void fireDebugEventFlag() {
@@ -1878,20 +1907,12 @@ public final class GltfMapTestScene extends ScreenAdapter {
     }
 
     private void fireEventById(String eventId, Vector3 triggerPosition) {
-        if (eventBus == null || eventId == null || eventId.isBlank()) {
+        if (eventTriggerRuntime == null || eventId == null || eventId.isBlank()) {
             return;
         }
 
         Vector3 resolvedTrigger = triggerPosition == null ? playerPos : triggerPosition;
-        EventContext context = new EventContext(
-                resolvedTrigger,
-                playerPos,
-                elapsedSeconds,
-                soundPropagationOrchestrator,
-                eventAudioSystem,
-                eventBus,
-                eventState);
-        eventBus.fire(eventId, context, eventState);
+        eventTriggerRuntime.fireEvent(eventId, resolvedTrigger, playerPos, elapsedSeconds, soundPropagationOrchestrator);
     }
 
     private void renderAcousticGraphWorldMarkers() {
@@ -2799,9 +2820,9 @@ public final class GltfMapTestScene extends ScreenAdapter {
         if (spatialCueController != null) {
             spatialCueController.dispose();
         }
-        if (eventAudioSystem != null) {
-            eventAudioSystem.dispose();
-            eventAudioSystem = null;
+        if (eventTriggerRuntime != null) {
+            eventTriggerRuntime.dispose();
+            eventTriggerRuntime = null;
         }
         if (physicsWorld != null) {
             physicsWorld.dispose();

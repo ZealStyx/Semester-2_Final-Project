@@ -2,6 +2,8 @@ package io.github.superteam.resonance.audio;
 
 import com.badlogic.gdx.audio.Music;
 import com.badlogic.gdx.audio.Sound;
+import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Disposable;
 
 /**
@@ -9,11 +11,31 @@ import com.badlogic.gdx.utils.Disposable;
  */
 public final class GameAudioSystem implements Disposable {
     private final SoundBank soundBank = new SoundBank();
+    private final AudioChannelConfig channelConfig = new AudioChannelConfig();
+    private final AmbienceTrack ambienceTrack = new AmbienceTrack(soundBank);
     private Music currentMusic;
 
     public long playSound(String path, float volume) {
         Sound sound = soundBank.sound(path);
-        return sound.play(Math.max(0f, volume));
+        float finalVolume = Math.max(0f, volume)
+            * channelConfig.volumeFor(AudioChannel.MASTER)
+            * channelConfig.volumeFor(AudioChannel.SFX);
+        return sound.play(finalVolume);
+    }
+
+    public long playSfx(String path, Vector3 emitterPosition, Vector3 listenerPosition, float volume) {
+        if (emitterPosition == null || listenerPosition == null) {
+            return playSound(path, volume);
+        }
+
+        float distance = emitterPosition.dst(listenerPosition);
+        float attenuation = Math.max(0f, 1f - (distance / 30f));
+        float pan = MathUtils.clamp((emitterPosition.x - listenerPosition.x) / 8f, -1f, 1f);
+        float finalVolume = Math.max(0f, volume)
+            * attenuation * attenuation
+            * channelConfig.volumeFor(AudioChannel.MASTER)
+            * channelConfig.volumeFor(AudioChannel.SFX);
+        return soundBank.sound(path).play(finalVolume, 1f, pan);
     }
 
     public void playMusic(String path, boolean looping, float volume) {
@@ -23,8 +45,30 @@ public final class GameAudioSystem implements Disposable {
 
         currentMusic = soundBank.music(path);
         currentMusic.setLooping(looping);
-        currentMusic.setVolume(Math.max(0f, volume));
+        currentMusic.setVolume(Math.max(0f, volume)
+            * channelConfig.volumeFor(AudioChannel.MASTER)
+            * channelConfig.volumeFor(AudioChannel.MUSIC));
         currentMusic.play();
+    }
+
+    public void setAmbience(String path, float crossfadeSeconds) {
+        ambienceTrack.setTargetVolume(
+            channelConfig.volumeFor(AudioChannel.MASTER)
+                * channelConfig.volumeFor(AudioChannel.AMBIENCE)
+        );
+        ambienceTrack.crossfadeTo(path, crossfadeSeconds);
+    }
+
+    public void update(float deltaSeconds) {
+        ambienceTrack.setTargetVolume(
+            channelConfig.volumeFor(AudioChannel.MASTER)
+                * channelConfig.volumeFor(AudioChannel.AMBIENCE)
+        );
+        ambienceTrack.update(deltaSeconds);
+    }
+
+    public AudioChannelConfig channelConfig() {
+        return channelConfig;
     }
 
     public void stopMusic() {
@@ -36,6 +80,7 @@ public final class GameAudioSystem implements Disposable {
 
     @Override
     public void dispose() {
+        ambienceTrack.stopAll();
         stopMusic();
         soundBank.dispose();
     }

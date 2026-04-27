@@ -24,12 +24,12 @@ public final class PlaySoundAction implements EventAction {
         if (context == null || context.audioSystem() == null) {
             return;
         }
-
-        if (Gdx.files == null || !Gdx.files.internal(soundPath).exists()) {
-            Gdx.app.log("EventAction", "Skipping PLAY_SOUND, missing asset: " + soundPath);
-            return;
-        }
-
-        context.audioSystem().playSound(soundPath, volume);
+        context.runWithSequenceDelay(() -> {
+            if (Gdx.files == null || !Gdx.files.internal(soundPath).exists()) {
+                Gdx.app.log("EventAction", "Skipping PLAY_SOUND, missing asset: " + soundPath);
+                return;
+            }
+            context.audioSystem().playSound(soundPath, volume);
+        });
     }
 }

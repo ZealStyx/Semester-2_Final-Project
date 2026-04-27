@@ -23,7 +23,6 @@ public final class SetFlagAction implements EventAction {
         if (context == null || context.eventState() == null) {
             return;
         }
-
-        context.eventState().setFlag(flagName, value);
+        context.runWithSequenceDelay(() -> context.eventState().setFlag(flagName, value));
     }
 }
