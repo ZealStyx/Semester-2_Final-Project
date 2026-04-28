@@ -38,6 +38,21 @@ public final class GameAudioSystem implements Disposable {
         return soundBank.sound(path).play(finalVolume, 1f, pan);
     }
 
+    public long playSpatialSfxPitched(String path, Vector3 emitterPosition, Vector3 listenerPosition, float volume, float pitch) {
+        if (emitterPosition == null || listenerPosition == null) {
+            return soundBank.sound(path).play(Math.max(0f, volume), Math.max(0.1f, pitch), 0f);
+        }
+
+        float distance = emitterPosition.dst(listenerPosition);
+        float attenuation = Math.max(0f, 1f - (distance / 30f));
+        float pan = MathUtils.clamp((emitterPosition.x - listenerPosition.x) / 8f, -1f, 1f);
+        float finalVolume = Math.max(0f, volume)
+            * attenuation * attenuation
+            * channelConfig.volumeFor(AudioChannel.MASTER)
+            * channelConfig.volumeFor(AudioChannel.SFX);
+        return soundBank.sound(path).play(finalVolume, Math.max(0.1f, pitch), pan);
+    }
+
     public void playMusic(String path, boolean looping, float volume) {
         if (currentMusic != null) {
             currentMusic.stop();

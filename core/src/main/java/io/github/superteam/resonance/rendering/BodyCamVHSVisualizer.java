@@ -1,6 +1,7 @@
 package io.github.superteam.resonance.rendering;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Mesh;
 import com.badlogic.gdx.graphics.Texture;
@@ -49,17 +50,39 @@ public final class BodyCamVHSVisualizer {
     private void bindShaderUniforms(float elapsedSeconds, BodyCamVHSSettings settings) {
         shader.bind();
         shader.setUniformi("u_texture", 0);
-        shader.setUniformf("u_screenSize", (float) Gdx.graphics.getBackBufferWidth(), (float) Gdx.graphics.getBackBufferHeight());
+        float width = (float) Gdx.graphics.getBackBufferWidth();
+        float height = (float) Gdx.graphics.getBackBufferHeight();
+        shader.setUniformf("u_resolution", width, height);
+
+        // convert diagonal FOV to vertical FOV based on aspect ratio
+        float diagRad = (float) Math.toRadians(settings.fovDiagonalDegrees);
+        float aspect = width / Math.max(1f, height);
+        float tanDiag2 = (float) Math.tan(diagRad * 0.5f);
+        float tanVert2 = tanDiag2 / (float) Math.sqrt(aspect * aspect + 1.0f);
+        float verticalFovDeg = (float) Math.toDegrees(2.0f * Math.atan(tanVert2));
+        shader.setUniformf("u_verticalFOV", verticalFovDeg);
+
+        // time and motion for grain / dynamic vignette
         shader.setUniformf("u_time", elapsedSeconds);
-        shader.setUniformf("u_vhsStrength", settings.vhsTapeNoiseAmount);
-        shader.setUniformf("u_fovDiagonalDegrees", settings.fovDiagonalDegrees);
-        shader.setUniformf("u_barrelDistortionStrength", settings.barrelDistortionStrength + animator.wobbleStrength());
-        shader.setUniformf("u_chromaticAberrationPixels", settings.chromaticAberrationPixels);
-        shader.setUniformf("u_vhsScanLineStrength", settings.vhsScanLineStrength);
-        shader.setUniformf("u_vhsTapeNoiseAmount", settings.vhsTapeNoiseAmount);
-        shader.setUniformf("u_crtCurveAmount", settings.crtCurveAmount);
-        setOptionalUniform("u_vignetteRadius", settings.vignetteRadius);
-        setOptionalUniform("u_vignetteSoftness", settings.vignetteSoftness);
+        float motion = MathUtils.clamp(animator.wobbleStrength(), 0.0f, 1.0f);
+        shader.setUniformf("u_motion", motion);
+
+        // distortion parameters: keep the curve stable, vary the overall blend instead
+        float strength = MathUtils.clamp(
+            0.30f + (0.35f * settings.barrelDistortionStrength) + (0.05f * motion),
+            0.35f,
+            0.72f
+        );
+        shader.setUniformf("u_strength", strength);
+        shader.setUniformf("u_k1", 0.24f);
+        shader.setUniformf("u_k2", 0.06f);
+
+        // chromatic aberration base amount (tuned multiplier)
+        shader.setUniformf("u_caAmount", 0.0055f * settings.chromaticAberrationPixels);
+
+        // vignette mapping (inner/outer radii)
+        shader.setUniformf("u_vignetteInner", settings.vignetteRadius);
+        shader.setUniformf("u_vignetteOuter", settings.vignetteRadius + settings.vignetteSoftness);
     }
 
     private void drawTextureToCurrentTarget(Texture texture, boolean enableDepth) {
@@ -69,17 +92,18 @@ public final class BodyCamVHSVisualizer {
         texture.bind(0);
         shader.bind();
         shader.setUniformi("u_texture", 0);
-        shader.setUniformf("u_screenSize", (float) Gdx.graphics.getBackBufferWidth(), (float) Gdx.graphics.getBackBufferHeight());
+        float width = (float) Gdx.graphics.getBackBufferWidth();
+        float height = (float) Gdx.graphics.getBackBufferHeight();
+        shader.setUniformf("u_resolution", width, height);
+        shader.setUniformf("u_verticalFOV", 75.0f);
+        shader.setUniformf("u_strength", 0.0f);
+        shader.setUniformf("u_k1", 0.32f);
+        shader.setUniformf("u_k2", 0.10f);
+        shader.setUniformf("u_caAmount", 0.0f);
+        shader.setUniformf("u_vignetteInner", 1.0f);
+        shader.setUniformf("u_vignetteOuter", 1.0f);
         shader.setUniformf("u_time", 0.0f);
-        shader.setUniformf("u_vhsStrength", 0.0f);
-        shader.setUniformf("u_fovDiagonalDegrees", 90.0f);
-        shader.setUniformf("u_barrelDistortionStrength", 0.0f);
-        shader.setUniformf("u_chromaticAberrationPixels", 0.0f);
-        shader.setUniformf("u_vhsScanLineStrength", 0.0f);
-        shader.setUniformf("u_vhsTapeNoiseAmount", 0.0f);
-        shader.setUniformf("u_crtCurveAmount", 0.0f);
-        setOptionalUniform("u_vignetteRadius", 0.0f);
-        setOptionalUniform("u_vignetteSoftness", 0.0f);
+        shader.setUniformf("u_motion", 0.0f);
         fullScreenQuad.render(shader, GL20.GL_TRIANGLES);
     }
 

@@ -1,19 +1,32 @@
 package io.github.superteam.resonance.screens;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
 import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.utils.Array;
 import io.github.superteam.resonance.audio.GameAudioSystem;
 import io.github.superteam.resonance.enemy.EnemyController;
 import io.github.superteam.resonance.event.EventBus;
 import io.github.superteam.resonance.event.EventContext;
 import io.github.superteam.resonance.event.EventState;
 import io.github.superteam.resonance.interactable.InteractableRegistry;
+import io.github.superteam.resonance.interactable.door.DoorController;
+import io.github.superteam.resonance.interactable.door.DoorGrabInteraction;
+import io.github.superteam.resonance.interactable.door.DoorLockState;
+import io.github.superteam.resonance.interaction.InteractionPromptRenderer;
+import io.github.superteam.resonance.interaction.InteractionResult;
 import io.github.superteam.resonance.interaction.RaycastInteractionSystem;
+import io.github.superteam.resonance.map.MapDocument;
+import io.github.superteam.resonance.map.MapDocumentLoader;
+import io.github.superteam.resonance.map.MapObject;
+import io.github.superteam.resonance.map.MapObjectType;
 import io.github.superteam.resonance.settings.KeybindRegistry;
 import io.github.superteam.resonance.settings.SettingsData;
 import io.github.superteam.resonance.settings.SettingsSystem;
+import io.github.superteam.resonance.sound.SoundEvent;
+import io.github.superteam.resonance.sound.SoundEventData;
 
 /**
  * Main gameplay screen scaffold.
@@ -31,6 +44,7 @@ public class GameScreen extends ScreenAdapter {
 	private static final String FINAL_TRIGGERS_PATH = "config/triggers.json";
 
 	private boolean initialized;
+	private float elapsedSeconds;
 	private SettingsSystem settingsSystem;
 	private SettingsData settingsData;
 	private KeybindRegistry keybindRegistry;
@@ -39,7 +53,12 @@ public class GameScreen extends ScreenAdapter {
 	private EventState eventState;
 	private InteractableRegistry interactableRegistry;
 	private RaycastInteractionSystem raycastInteractionSystem;
+	private DoorGrabInteraction doorGrabInteraction;
+	private final InteractionPromptRenderer interactionPromptRenderer = new InteractionPromptRenderer();
+	private String interactionPrompt = "";
 	private EnemyController enemyController;
+	private final Array<DoorController> doorControllers = new Array<>();
+	private MapDocument mapDocument;
 	private final Vector3 bootstrapPlayerPosition = new Vector3();
 	private final Vector3 bootstrapPlayerForward = new Vector3(0f, 0f, -1f);
 
@@ -117,6 +136,8 @@ public class GameScreen extends ScreenAdapter {
 	}
 
 	private void update(float delta) {
+		elapsedSeconds += Math.max(0f, delta);
+
 		if (gameAudioSystem != null) {
 			gameAudioSystem.update(delta);
 		}
@@ -124,18 +145,54 @@ public class GameScreen extends ScreenAdapter {
 			eventBus.update(delta);
 		}
 
+		EventContext interactionContext = new EventContext(
+			bootstrapPlayerPosition,
+			bootstrapPlayerPosition,
+			elapsedSeconds,
+			null,
+			gameAudioSystem,
+			eventBus,
+			eventState,
+			null
+		);
+
 		if (raycastInteractionSystem != null) {
-			EventContext interactionContext = new EventContext(
+			InteractionResult interactionResult = raycastInteractionSystem.update(
 				bootstrapPlayerPosition,
-				bootstrapPlayerPosition,
-				0f,
-				null,
-				gameAudioSystem,
-				eventBus,
-				eventState,
-				null
+				bootstrapPlayerForward,
+				interactionContext
 			);
-			raycastInteractionSystem.update(bootstrapPlayerPosition, bootstrapPlayerForward, interactionContext);
+			interactionPrompt = interactionPromptRenderer.formatPrompt(interactionResult);
+
+			if (doorGrabInteraction != null && raycastInteractionSystem.focused() instanceof DoorController focusedDoor) {
+				doorGrabInteraction.update(
+					delta,
+					Gdx.input.getDeltaX(),
+					Gdx.input.isButtonPressed(Input.Buttons.LEFT),
+					focusedDoor,
+					interactionContext
+				);
+			}
+		}
+
+		for (DoorController doorController : doorControllers) {
+			doorController.update(delta, interactionContext);
+			if (enemyController == null) {
+				continue;
+			}
+
+			float noiseIntensity = doorController.consumeNoiseIntensity();
+			if (noiseIntensity < 0.15f) {
+				continue;
+			}
+
+			enemyController.onSoundHeard(new SoundEventData(
+				SoundEvent.DOOR_SLAM,
+				"door-runtime",
+				doorController.worldPosition(),
+				noiseIntensity,
+				elapsedSeconds
+			));
 		}
 
 		if (enemyController != null) {
@@ -156,15 +213,44 @@ public class GameScreen extends ScreenAdapter {
 	}
 
 	private void renderUi(float delta) {
+		if (interactionPrompt == null || interactionPrompt.isBlank()) {
+			return;
+		}
+
+		// Prompt string is prepared here and can be rendered by HUD integration.
 		// Reserve for HUD/menu overlays.
 	}
 
 	private void initializeMapAndCollision() {
-		// Final map bootstrap goes here.
-		// Example future wiring:
-		// - Load FINAL_MAP_MODEL_PATH
-		// - Load FINAL_MAP_DOCUMENT_PATH
-		// - Build/attach collision bodies
+		mapDocument = new MapDocumentLoader().loadOrDefault(FINAL_MAP_DOCUMENT_PATH);
+		if (mapDocument == null) {
+			mapDocument = MapDocument.defaults();
+		}
+
+		if (mapDocument.objects != null) {
+			for (MapObject mapObject : mapDocument.objects) {
+				if (mapObject == null || mapObject.type == null) {
+					continue;
+				}
+
+				if (mapObject.type == MapObjectType.SPAWN_POINT && mapObject.position != null) {
+					bootstrapPlayerPosition.set(mapObject.position);
+				}
+
+				if (mapObject.type == MapObjectType.DOOR && mapObject.position != null) {
+					doorControllers.add(buildDoorFromMapObject(mapObject));
+				}
+			}
+		}
+
+		if (doorControllers.size == 0) {
+			doorControllers.add(new DoorController("bootstrap-door", new Vector3(1.5f, 0f, -1.2f), 1.3f));
+		}
+
+		// Final map path constants are anchored for follow-up map/collision integration.
+		if (FINAL_MAP_MODEL_PATH.isBlank() || FINAL_EVENTS_PATH.isBlank() || FINAL_TRIGGERS_PATH.isBlank()) {
+			throw new IllegalStateException("Final map runtime paths must not be blank.");
+		}
 	}
 
 	private void initializeCoreSystems() {
@@ -183,9 +269,15 @@ public class GameScreen extends ScreenAdapter {
 
 	private void initializeGameplaySystems() {
 		interactableRegistry = new InteractableRegistry();
+		for (DoorController doorController : doorControllers) {
+			interactableRegistry.register(doorController);
+		}
+
 		raycastInteractionSystem = new RaycastInteractionSystem(interactableRegistry);
 		raycastInteractionSystem.setInteractKeycode(keybindRegistry.keyFor(KeybindRegistry.INTERACT));
+		doorGrabInteraction = new DoorGrabInteraction();
 		enemyController = new EnemyController();
+		enemyController.setPose(new Vector3(6f, 0f, 6f), new Vector3(-1f, 0f, -1f));
 
 		// Group A bootstrap complete:
 		// - Interaction targeting path
@@ -195,5 +287,32 @@ public class GameScreen extends ScreenAdapter {
 
 	private void initializeUiAndOverlays() {
 		// Reserve for subtitle, debug overlay, interaction prompts, and pause UI.
+	}
+
+	private DoorController buildDoorFromMapObject(MapObject mapObject) {
+		String resolvedId = mapObject.id == null || mapObject.id.isBlank() ? "door" : mapObject.id;
+		float radius = parseFloatProperty(mapObject, "interactionRadius", 1.2f);
+		DoorController doorController = new DoorController(resolvedId, mapObject.position, radius);
+
+		String lockState = mapObject.property("lockState", DoorLockState.UNLOCKED.name());
+		try {
+			doorController.setLockState(DoorLockState.valueOf(lockState.toUpperCase()));
+		} catch (Exception ignored) {
+			doorController.setLockState(DoorLockState.UNLOCKED);
+		}
+
+		return doorController;
+	}
+
+	private static float parseFloatProperty(MapObject mapObject, String propertyName, float fallback) {
+		if (mapObject == null || propertyName == null || propertyName.isBlank()) {
+			return fallback;
+		}
+
+		try {
+			return Float.parseFloat(mapObject.property(propertyName, Float.toString(fallback)));
+		} catch (Exception ignored) {
+			return fallback;
+		}
 	}
 }

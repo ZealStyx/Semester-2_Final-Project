@@ -114,16 +114,6 @@ public final class SoundPropagationZone extends BaseShellZone implements Disposa
             return;
         }
 
-        shapeRenderer.setProjectionMatrix(camera.combined);
-        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
-        shapeRenderer.setColor(1.0f, 0.85f, 0.25f, flashAlpha);
-
-        float baseRadius = 1.6f + (1f - flashAlpha) * 1.2f;
-        drawWorldSphere(baseRadius, 26);
-        drawWorldSphere(baseRadius + 1.4f, 30);
-
-        shapeRenderer.end();
-
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         shapeRenderer.setColor(1.0f, 0.65f, 0.1f, flashAlpha);
         float markerSize = 0.12f;
@@ -139,45 +129,6 @@ public final class SoundPropagationZone extends BaseShellZone implements Disposa
             );
         }
         shapeRenderer.end();
-    }
-
-    private void drawWorldSphere(float radius, int segments) {
-        float cx = lastPulseCenter.x;
-        float cy = lastPulseCenter.y + 1.0f;
-        float cz = lastPulseCenter.z;
-
-        float[] latOffsets = {0f, radius * 0.6f, -radius * 0.6f};
-        for (float lat : latOffsets) {
-            float ringR = (float) Math.sqrt(Math.max(0f, (radius * radius) - (lat * lat)));
-            float y = cy + lat;
-            float px = cx + ringR;
-            float pz = cz;
-            for (int i = 1; i <= segments; i++) {
-                float a = (i * MathUtils.PI2) / segments;
-                float nx = cx + MathUtils.cos(a) * ringR;
-                float nz = cz + MathUtils.sin(a) * ringR;
-                shapeRenderer.line(px, y, pz, nx, y, nz);
-                px = nx;
-                pz = nz;
-            }
-        }
-
-        for (int meridian = 0; meridian < 2; meridian++) {
-            float rot = meridian * MathUtils.PI * 0.5f;
-            float prevX = cx + MathUtils.cos(rot) * radius;
-            float prevY = cy;
-            float prevZ = cz + MathUtils.sin(rot) * radius;
-            for (int i = 1; i <= segments; i++) {
-                float a = (i * MathUtils.PI) / segments;
-                float x = cx + MathUtils.cos(rot) * MathUtils.cos(a) * radius;
-                float yy = cy + MathUtils.sin(a) * radius;
-                float z = cz + MathUtils.sin(rot) * MathUtils.cos(a) * radius;
-                shapeRenderer.line(prevX, prevY, prevZ, x, yy, z);
-                prevX = x;
-                prevY = yy;
-                prevZ = z;
-            }
-        }
     }
 
     @Override

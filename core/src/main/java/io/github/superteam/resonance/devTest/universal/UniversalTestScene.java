@@ -51,9 +51,19 @@ import io.github.superteam.resonance.devTest.universal.zones.ParticleArenaZone;
 import io.github.superteam.resonance.devTest.universal.zones.RampStairsZone;
 import io.github.superteam.resonance.devTest.universal.zones.ShaderCorridorZone;
 import io.github.superteam.resonance.devTest.universal.zones.SoundPropagationZone;
+import io.github.superteam.resonance.interactable.door.DoorController;
+import io.github.superteam.resonance.interactable.InteractableRegistry;
+import io.github.superteam.resonance.interactable.door.DoorGrabInteraction;
+import io.github.superteam.resonance.interaction.RaycastInteractionSystem;
+import io.github.superteam.resonance.interaction.InteractionPromptRenderer;
+import io.github.superteam.resonance.interaction.InteractionResult;
 import io.github.superteam.resonance.items.CarriableItem;
 import io.github.superteam.resonance.items.ItemDefinition;
 import io.github.superteam.resonance.items.ItemType;
+import io.github.superteam.resonance.lighting.FlickerController;
+import io.github.superteam.resonance.lighting.GameLight;
+import io.github.superteam.resonance.lighting.LightManager;
+import io.github.superteam.resonance.lighting.LightingTier;
 import io.github.superteam.resonance.player.CameraBreathingController;
 import io.github.superteam.resonance.player.CarrySystem;
 import io.github.superteam.resonance.player.ImpactListener;
@@ -77,6 +87,16 @@ import io.github.superteam.resonance.rendering.blind.BlindEffectConfigStore;
 import io.github.superteam.resonance.rendering.blind.BlindEffectController;
 import io.github.superteam.resonance.rendering.blind.BlindEffectRevealConfig;
 import io.github.superteam.resonance.rendering.blind.BlindFogUniformUpdater;
+import io.github.superteam.resonance.sanity.SanitySystem;
+import io.github.superteam.resonance.sanity.drains.DarknessPresenceDrain;
+import io.github.superteam.resonance.sanity.drains.EnemyProximityDrain;
+import io.github.superteam.resonance.sanity.drains.EventDrain;
+import io.github.superteam.resonance.sanity.effects.AudioGlitchEffect;
+import io.github.superteam.resonance.sanity.effects.HallucinationEffect;
+import io.github.superteam.resonance.sanity.effects.ScreenVignetteEffect;
+import io.github.superteam.resonance.sanity.effects.ShaderDistortionEffect;
+import io.github.superteam.resonance.scare.JumpScare;
+import io.github.superteam.resonance.scare.JumpScareDirector;
 import io.github.superteam.resonance.sound.AcousticGraphEngine;
 import io.github.superteam.resonance.sound.viz.AcousticBounce3DVisualizer;
 import io.github.superteam.resonance.sound.viz.AcousticBounceConfig;
@@ -100,6 +120,13 @@ import io.github.superteam.resonance.multiplayer.VoiceCaptureSystem;
 import io.github.superteam.resonance.multiplayer.VoicePlaybackSystem;
 import io.github.superteam.resonance.multiplayer.packets.Packets;
 import io.github.superteam.resonance.multiplayer.packets.Packets.VoiceChunkPacket;
+import io.github.superteam.resonance.dialogue.DialogueSystem;
+import io.github.superteam.resonance.save.SaveSystem;
+import io.github.superteam.resonance.story.StorySystem;
+import io.github.superteam.resonance.transition.RoomTransitionSystem;
+import io.github.superteam.resonance.debug.DebugConsole;
+import io.github.superteam.resonance.debug.DebugCommand;
+import io.github.superteam.resonance.settings.SettingsSystem;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -111,6 +138,12 @@ import java.util.Set;
 public final class UniversalTestScene extends ScreenAdapter {
     private static final float HUB_X = 40.0f;
     private static final float HUB_Z = 40.0f;
+    private static final float ZONE_RING_OFFSET = 20.0f;
+    private static final float BLIND_ZONE_OFFSET = 36.0f;
+    private static final float DOOR_TEST_Z = HUB_Z + 10.0f;
+    private static final float DOOR_TEST_SPAN = 1.6f;
+    private static final float DOOR_INTERACT_RANGE = 2.8f;
+    private static final float DOOR_INTERACT_FACING_DOT = 0.68f;
     
     private MultiplayerLaunchConfig launchConfig = null;
     private boolean voiceCaptureStarted = false;
@@ -209,6 +242,7 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private final Matrix4 hudProjection = new Matrix4();
     private final Matrix4 playerViewModelTransform = new Matrix4();
+    private final Matrix4 runtimeDoorTransform = new Matrix4();
     private final Matrix4 tmpBodyTransform = new Matrix4();
     private final Matrix4 tmpBreathingRotation = new Matrix4();
 
@@ -228,6 +262,8 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final Vector3 tmpRayDirection = new Vector3();
     private final Vector3 tmpRayEnd = new Vector3();
     private final Vector3 tmpViewModelColor = new Vector3(0.12f, 0.78f, 0.74f);
+    private final Vector3 runtimeDoorHingePosition = new Vector3();
+    private final Vector3 runtimeDoorFaceTarget = new Vector3();
     private final Vector3 lastNearestNodeQueryPosition = new Vector3(Float.NaN, Float.NaN, Float.NaN);
 
     private ShaderProgram worldShader;
@@ -244,15 +280,37 @@ public final class UniversalTestScene extends ScreenAdapter {
     private AcousticBounceConfig acousticBounceConfig;
     private AcousticBounce3DVisualizer acousticBounce3DVisualizer;
     private final DirectorController directorController;
+    private final LightManager lightManager;
+    private final SanitySystem sanitySystem;
+    private final EventDrain sanityEventDrain;
+    private final ScreenVignetteEffect sanityVignetteEffect;
+    private final ShaderDistortionEffect sanityDistortionEffect;
+    private final AudioGlitchEffect sanityAudioGlitchEffect;
+    private final HallucinationEffect sanityHallucinationEffect;
+    private final JumpScareDirector jumpScareDirector;
     private final SimplePanicModel panicModel = new SimplePanicModel();
     private final BlindFogUniformUpdater blindFogUniformUpdater = new BlindFogUniformUpdater();
     private EventTriggerRuntime eventTriggerRuntime;
 
     private final java.util.EnumMap<ItemType, Mesh> viewModelMeshes = new java.util.EnumMap<>(ItemType.class);
     private Mesh playerViewModelMesh;
+    private Mesh runtimeDoorMesh;
     private Mesh fullscreenQuadMesh;
     private ClosestRayResultCallback cachedRayCallback;
     private io.github.superteam.resonance.particles.ParticleEffect mistEffect;
+    private DoorController runtimeDoorController;
+    private InteractableRegistry interactableRegistry;
+    private RaycastInteractionSystem raycastInteractionSystem;
+    private DoorGrabInteraction doorGrabInteraction;
+    private final InteractionPromptRenderer interactionPromptRenderer = new InteractionPromptRenderer();
+    private String interactionPrompt = "";
+    // Testbed systems (Group A-D)
+    private DialogueSystem dialogueSystem;
+    private SaveSystem saveSystem;
+    private StorySystem storySystem;
+    private RoomTransitionSystem roomTransitionSystem;
+    private DebugConsole debugConsole;
+    private SettingsSystem settingsSystem;
 
     private btCollisionConfiguration physicsCollisionConfiguration;
     private btCollisionDispatcher physicsCollisionDispatcher;
@@ -285,6 +343,11 @@ public final class UniversalTestScene extends ScreenAdapter {
     private float lastMicLevelNormalized;
     private float appliedBreathingY;
     private float appliedBreathingRollDeg;
+    private float baseBarrelDistortionStrength;
+    private float baseChromaticAberrationPixels;
+    private float baseVignetteRadius;
+    private float baseVignetteSoftness;
+    private float baseVhsTapeNoiseAmount;
     private int micHistoryCursor;
     private int pendingScrollSteps;
     private boolean showGraphDebug;
@@ -330,6 +393,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 "shaders/frag/body_cam_vhs.frag");
         bodyCamFrameBuffer = new BodyCamPassFrameBuffer();
         bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
+        captureBaseBodyCamSettings();
         blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
         blindEffectController = new BlindEffectController(blindEffectConfig, panicModel);
         fullscreenQuadMesh = createFullscreenQuadMesh();
@@ -339,10 +403,129 @@ public final class UniversalTestScene extends ScreenAdapter {
                 fullscreenQuadMesh,
                 new BodyCamVHSAnimator());
         directorController = new DirectorController();
+        lightManager = new LightManager(new FlickerController());
+        setupLightingRig();
+
+        sanitySystem = new SanitySystem();
+        sanityEventDrain = new EventDrain();
+        sanityVignetteEffect = new ScreenVignetteEffect();
+        sanityDistortionEffect = new ShaderDistortionEffect();
+        sanityAudioGlitchEffect = new AudioGlitchEffect();
+        sanityHallucinationEffect = new HallucinationEffect();
+        sanitySystem.addDrainSource(new DarknessPresenceDrain(1.4f));
+        sanitySystem.addDrainSource(new EnemyProximityDrain(20f, 1.2f));
+        sanitySystem.addDrainSource(sanityEventDrain);
+        sanitySystem.addEffect(sanityVignetteEffect);
+        sanitySystem.addEffect(sanityDistortionEffect);
+        sanitySystem.addEffect(sanityAudioGlitchEffect);
+        sanitySystem.addEffect(sanityHallucinationEffect);
+
+        jumpScareDirector = new JumpScareDirector();
+
+        // Lightweight systems for testbed demos
+        dialogueSystem = new DialogueSystem();
+        saveSystem = new SaveSystem();
+        storySystem = new StorySystem();
+        roomTransitionSystem = new RoomTransitionSystem();
+        debugConsole = new DebugConsole();
+        settingsSystem = new SettingsSystem();
+        settingsSystem.loadOrCreate();
+
+        // Register a simple debug "echo" command that shows subtitles
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "echo"; }
+            @Override public String help() { return "echo <text> - show text as subtitle"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (args == null || args.length == 0) return;
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < args.length; i++) { if (i > 0) sb.append(' '); sb.append(args[i]); }
+                if (ctx != null) ctx.showSubtitle(sb.toString(), 3.0f);
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "settings"; }
+            @Override public String help() { return "settings - show current settings snapshot"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (ctx == null) {
+                    return;
+                }
+                io.github.superteam.resonance.settings.SettingsData data = settingsSystem.data();
+                ctx.showSubtitle(
+                    "Settings FOV=" + data.targetFov
+                        + " Sens=" + String.format("%.2f", data.mouseSensitivity)
+                        + " Vol=" + String.format("%.2f/%.2f/%.2f", data.masterVolume, data.musicVolume, data.sfxVolume),
+                    3.5f
+                );
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "story"; }
+            @Override public String help() { return "story - show StorySystem debug status"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (ctx != null && storySystem != null) {
+                    ctx.showSubtitle("Story: " + storySystem.debugStatus(), 3.0f);
+                }
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "sanity"; }
+            @Override public String help() { return "sanity <delta> - queue sanity immediate delta (default -12)"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                float delta = -12f;
+                if (args != null && args.length > 0) {
+                    try {
+                        delta = Float.parseFloat(args[0]);
+                    } catch (NumberFormatException ignored) {
+                        delta = -12f;
+                    }
+                }
+                sanityEventDrain.queueDelta(delta);
+                if (ctx != null) {
+                    ctx.showSubtitle("Queued sanity delta: " + String.format("%.1f", delta), 2.5f);
+                }
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "savequick"; }
+            @Override public String help() { return "savequick - write autosave from current testbed state"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                io.github.superteam.resonance.save.SaveData sd = new io.github.superteam.resonance.save.SaveData();
+                sd.playerPosition = playerController.getPosition();
+                sd.playerSanity = sanitySystem.getSanity();
+                sd.savedAtMillis = TimeUtils.millis();
+                sd.savedAtDisplay = String.format("%1$tF %1$tT", sd.savedAtMillis);
+                saveSystem.save(sd);
+                if (ctx != null) {
+                    ctx.showSubtitle("savequick complete", 2.0f);
+                }
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "loadquick"; }
+            @Override public String help() { return "loadquick - read autosave and show slot info"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                io.github.superteam.resonance.save.SaveData loaded = saveSystem.load();
+                if (ctx == null) {
+                    return;
+                }
+                if (loaded == null) {
+                    ctx.showSubtitle("loadquick: no save found", 2.0f);
+                } else {
+                    ctx.showSubtitle("loadquick: " + loaded.saveSlotId + " @ " + loaded.savedAtDisplay, 2.5f);
+                }
+            }
+        });
+
+        // Give EventTriggerRuntime access to optional systems
+        if (eventTriggerRuntime != null) {
+            eventTriggerRuntime.setOptionalSystems(sanitySystem, jumpScareDirector, dialogueSystem, debugConsole,
+                storySystem, inventorySystem, null, null);
+        }
 
         buildParticleSystems();
 
         buildProceduralHubScene();
+        setupRuntimeDoorTest();
         initializeZones();
         registerZoneColliders();
         soundPulseShaderRenderer = new SoundPulseShaderRenderer(worldColliders);
@@ -355,6 +538,11 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         carrySystem = new CarrySystem(camera);
         inventorySystem = new InventorySystem();
+
+        if (eventTriggerRuntime != null) {
+            eventTriggerRuntime.setOptionalSystems(sanitySystem, jumpScareDirector, dialogueSystem, debugConsole,
+                storySystem, inventorySystem, null, null);
+        }
 
         acousticGraphEngine = new GraphPopulator().populate(worldColliders);
         cacheGraphNodePositions();
@@ -382,8 +570,10 @@ public final class UniversalTestScene extends ScreenAdapter {
         soundPropagationOrchestrator.registerDirectorListener((soundEventData, propagationResult) -> {
             lastSoundIntensity = Math.max(lastSoundIntensity, soundEventData.baseIntensity());
             directorController.onSoundEvent(soundEventData, propagationResult);
+            lightManager.onSoundEvent(soundEventData);
             blindEffectController.onSoundEvent(soundEventData);
             acousticBounce3DVisualizer.onSoundEvent(soundEventData, propagationResult);
+            sanityEventDrain.queueDelta(-0.65f * soundEventData.baseIntensity());
             if (propagationResult != null) {
                 cacheRevealedNodesForFlash(propagationResult);
             }
@@ -461,6 +651,75 @@ public final class UniversalTestScene extends ScreenAdapter {
         setLaunchConfig(config);
     }
 
+    private void captureBaseBodyCamSettings() {
+        if (bodyCamSettings == null) {
+            return;
+        }
+        baseBarrelDistortionStrength = bodyCamSettings.barrelDistortionStrength;
+        baseChromaticAberrationPixels = bodyCamSettings.chromaticAberrationPixels;
+        baseVignetteRadius = bodyCamSettings.vignetteRadius;
+        baseVignetteSoftness = bodyCamSettings.vignetteSoftness;
+        baseVhsTapeNoiseAmount = bodyCamSettings.vhsTapeNoiseAmount;
+    }
+
+    private void setupLightingRig() {
+        lightManager.register(new GameLight("hub-center", new Vector3(HUB_X, 2.2f, HUB_Z),
+            new com.badlogic.gdx.graphics.Color(0.70f, 0.88f, 1.0f, 1f), 16f, 0.70f, true));
+        lightManager.register(new GameLight("sound-zone", new Vector3(HUB_X, 2.1f, HUB_Z + ZONE_RING_OFFSET),
+            new com.badlogic.gdx.graphics.Color(0.66f, 0.75f, 1.0f, 1f), 14f, 0.65f, true));
+        lightManager.register(new GameLight("blind-zone", new Vector3(HUB_X, 2.0f, HUB_Z + BLIND_ZONE_OFFSET),
+            new com.badlogic.gdx.graphics.Color(0.80f, 0.76f, 0.68f, 1f), 12f, 0.55f, false));
+        lightManager.register(new GameLight("door-lane", new Vector3(HUB_X, 2.0f, DOOR_TEST_Z),
+            new com.badlogic.gdx.graphics.Color(0.72f, 0.82f, 0.95f, 1f), 11f, 0.60f, true));
+    }
+
+    private static LightingTier toLightingTier(DirectorController.DirectorTier directorTier) {
+        if (directorTier == null) {
+            return LightingTier.CALM;
+        }
+        return switch (directorTier) {
+            case CALM -> LightingTier.CALM;
+            case TENSE -> LightingTier.TENSE;
+            case PANICKED -> LightingTier.PANICKED;
+        };
+    }
+
+    private void applySanityDrivenBodyCamEffects() {
+        if (bodyCamSettings == null) {
+            return;
+        }
+
+        float vignetteStrength = sanityVignetteEffect.strength();
+        float distortionStrength = sanityDistortionEffect.distortion();
+        float audioGlitch = sanityAudioGlitchEffect.glitchAmount();
+
+        bodyCamSettings.vignetteRadius = MathUtils.clamp(
+            baseVignetteRadius - (0.18f * vignetteStrength),
+            0.25f,
+            1.5f
+        );
+        bodyCamSettings.vignetteSoftness = MathUtils.clamp(
+            baseVignetteSoftness + (0.36f * vignetteStrength),
+            0.05f,
+            1.0f
+        );
+        bodyCamSettings.barrelDistortionStrength = MathUtils.clamp(
+            baseBarrelDistortionStrength + (0.20f * distortionStrength),
+            0f,
+            0.5f
+        );
+        bodyCamSettings.chromaticAberrationPixels = MathUtils.clamp(
+            baseChromaticAberrationPixels + (3.0f * distortionStrength),
+            0f,
+            8f
+        );
+        bodyCamSettings.vhsTapeNoiseAmount = MathUtils.clamp(
+            baseVhsTapeNoiseAmount + (0.16f * audioGlitch),
+            0f,
+            1f
+        );
+    }
+
     private void onLocalVoiceChunkReady(VoiceChunkPacket chunk) {
         int localId = multiplayerManager.getLocalPlayerId();
         if (localId > 0) {
@@ -505,13 +764,13 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void initializeZones() {
-        zones.add(new RampStairsZone(new Vector3(HUB_X + 16.0f, 0.0f, HUB_Z)));
-        zones.add(new CrouchAlcoveZone(new Vector3(HUB_X, 0.0f, HUB_Z - 16.0f)));
-        zones.add(new SoundPropagationZone(new Vector3(HUB_X, 0.0f, HUB_Z + 16.0f)));
-        zones.add(new ParticleArenaZone(new Vector3(HUB_X + 16.0f, 0.0f, HUB_Z + 16.0f)));
-        zones.add(new ItemInteractionZone(new Vector3(HUB_X - 16.0f, 0.0f, HUB_Z + 16.0f)));
-        zones.add(new ShaderCorridorZone(new Vector3(HUB_X - 16.0f, 0.0f, HUB_Z)));
-        zones.add(new BlindChamberZone(new Vector3(HUB_X, 0.0f, HUB_Z + 32.0f)));
+        zones.add(new RampStairsZone(new Vector3(HUB_X + ZONE_RING_OFFSET, 0.0f, HUB_Z)));
+        zones.add(new CrouchAlcoveZone(new Vector3(HUB_X, 0.0f, HUB_Z - ZONE_RING_OFFSET)));
+        zones.add(new SoundPropagationZone(new Vector3(HUB_X, 0.0f, HUB_Z + ZONE_RING_OFFSET)));
+        zones.add(new ParticleArenaZone(new Vector3(HUB_X + ZONE_RING_OFFSET, 0.0f, HUB_Z + ZONE_RING_OFFSET)));
+        zones.add(new ItemInteractionZone(new Vector3(HUB_X - ZONE_RING_OFFSET, 0.0f, HUB_Z + ZONE_RING_OFFSET)));
+        zones.add(new ShaderCorridorZone(new Vector3(HUB_X - ZONE_RING_OFFSET, 0.0f, HUB_Z)));
+        zones.add(new BlindChamberZone(new Vector3(HUB_X, 0.0f, HUB_Z + BLIND_ZONE_OFFSET)));
 
         for (TestZone zone : zones) {
             zone.setUp();
@@ -618,7 +877,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         placeholderEffect.setActive(false);
         particleManager.addEffect(placeholderEffect);
 
-        // Fix H — atmospheric mist emitter that follows the player each frame.
+        // Fix H â€” atmospheric mist emitter that follows the player each frame.
         ParticleDefinition mistDefinition = ParticleDefinition.createDefault();
         mistDefinition.emissionRate = 6f;
         mistDefinition.emissionDuration = 0f; // 0 = continuous in this system
@@ -631,7 +890,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         mistDefinition.startSizeMax = 0.55f;
         mistDefinition.endSizeMin = 0.80f;
         mistDefinition.endSizeMax = 1.20f;
-        // Mist is nearly invisible — low alpha via color alpha channel.
+        // Mist is nearly invisible â€” low alpha via color alpha channel.
         mistDefinition.startColor = new float[] { 0.55f, 0.62f, 0.70f, 0.07f };
         mistDefinition.endColor = new float[] { 0.45f, 0.52f, 0.60f, 0.00f };
         mistDefinition.speedMin = 0.04f;
@@ -651,7 +910,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         particleManager.addEffect(mistEffect);
     }
 
-    /** INCON-06 / Fix L — per-item-type view model meshes with distinct shapes. */
+    /** INCON-06 / Fix L â€” per-item-type view model meshes with distinct shapes. */
     private void buildViewModelMeshes() {
         viewModelMeshes.put(ItemType.METAL_PIPE, createCubeMesh(0.06f, 0.80f, 0.06f));
         viewModelMeshes.put(ItemType.GLASS_BOTTLE, createCubeMesh(0.09f, 0.38f, 0.09f));
@@ -671,7 +930,7 @@ public final class UniversalTestScene extends ScreenAdapter {
             Bullet.init();
             bulletInitialized = true;
         }
-        // IMPROVE-01 — pre-allocate the ray callback so findRaycastCarriable() never
+        // IMPROVE-01 â€” pre-allocate the ray callback so findRaycastCarriable() never
         // allocates per frame.
         cachedRayCallback = new ClosestRayResultCallback(Vector3.Zero, Vector3.Zero);
 
@@ -725,38 +984,103 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void buildProceduralHubScene() {
-        addBox(HUB_X, -0.05f, HUB_Z, 80.0f, 0.1f, 80.0f, false);
+        // Rebuilt layout: cleaner hub lanes with a dedicated runtime door test lane.
+        addBox(HUB_X, -0.05f, HUB_Z, 96.0f, 0.1f, 96.0f, false);
 
-        addBox(HUB_X, 2.0f, 80.4f, 80.0f, 4.0f, 0.2f, true);
-        addBox(HUB_X, 2.0f, -0.4f, 80.0f, 4.0f, 0.2f, true);
-        addBox(-0.4f, 2.0f, HUB_Z, 0.2f, 4.0f, 80.0f, true);
-        addBox(80.4f, 2.0f, HUB_Z, 0.2f, 4.0f, 80.0f, true);
+        addBox(HUB_X, 2.0f, HUB_Z + 48.2f, 96.0f, 4.0f, 0.25f, true);
+        addBox(HUB_X, 2.0f, HUB_Z - 48.2f, 96.0f, 4.0f, 0.25f, true);
+        addBox(HUB_X - 48.2f, 2.0f, HUB_Z, 0.25f, 4.0f, 96.0f, true);
+        addBox(HUB_X + 48.2f, 2.0f, HUB_Z, 0.25f, 4.0f, 96.0f, true);
 
-        addBox(HUB_X, 0.01f, HUB_Z, 4.5f, 0.2f, 4.5f, false);
+        addBox(HUB_X, 0.01f, HUB_Z, 8.5f, 0.2f, 8.5f, false);
 
-        addBox(HUB_X + 16.0f, -0.02f, HUB_Z, 5.5f, 0.15f, 5.5f, false);
-        addBox(HUB_X, -0.02f, HUB_Z - 16.0f, 5.5f, 0.15f, 5.5f, false);
-        addBox(HUB_X, -0.02f, HUB_Z + 16.0f, 5.5f, 0.15f, 5.5f, false);
-        addBox(HUB_X + 16.0f, -0.02f, HUB_Z + 16.0f, 5.5f, 0.15f, 5.5f, false);
-        addBox(HUB_X - 16.0f, -0.02f, HUB_Z + 16.0f, 5.5f, 0.15f, 5.5f, false);
-        addBox(HUB_X - 16.0f, -0.02f, HUB_Z, 5.5f, 0.15f, 5.5f, false);
-        addBox(HUB_X, -0.02f, HUB_Z + 32.0f, 5.5f, 0.15f, 5.5f, false);
-        addBox(HUB_X + 8.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
-        addBox(HUB_X + 8.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
+        addBox(HUB_X + ZONE_RING_OFFSET, -0.02f, HUB_Z, 7.5f, 0.15f, 7.5f, false);
+        addBox(HUB_X, -0.02f, HUB_Z - ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
+        addBox(HUB_X, -0.02f, HUB_Z + ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
+        addBox(HUB_X + ZONE_RING_OFFSET, -0.02f, HUB_Z + ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
+        addBox(HUB_X - ZONE_RING_OFFSET, -0.02f, HUB_Z + ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
+        addBox(HUB_X - ZONE_RING_OFFSET, -0.02f, HUB_Z, 7.5f, 0.15f, 7.5f, false);
+        addBox(HUB_X, -0.02f, HUB_Z + BLIND_ZONE_OFFSET, 7.5f, 0.15f, 7.5f, false);
 
-        addBox(HUB_X - CORRIDOR_HALF_WIDTH, 1.75f, HUB_Z - 8.0f, 0.2f, 3.5f, 16.0f, true);
-        addBox(HUB_X + CORRIDOR_HALF_WIDTH, 1.75f, HUB_Z - 8.0f, 0.2f, 3.5f, 16.0f, true);
+        addBox(HUB_X + 10.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
+        addBox(HUB_X + 10.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
+        addBox(HUB_X - 10.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
+        addBox(HUB_X - 10.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
 
-        addBox(HUB_X - CORRIDOR_HALF_WIDTH, 1.75f, HUB_Z + 24.0f, 0.2f, 3.5f, 32.0f, true);
-        addBox(HUB_X + CORRIDOR_HALF_WIDTH, 1.75f, HUB_Z + 24.0f, 0.2f, 3.5f, 32.0f, true);
-
-        addBox(HUB_X - 8.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
-        addBox(HUB_X - 8.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 16.0f, 3.5f, 0.2f, true);
+        // Door-test frame (center opening is left for runtime interactive door mesh).
+        addBox(HUB_X - 1.55f, 1.60f, DOOR_TEST_Z, 1.7f, 3.2f, 0.22f, true);
+        addBox(HUB_X + 1.55f, 1.60f, DOOR_TEST_Z, 1.7f, 3.2f, 0.22f, true);
+        addBox(HUB_X, 3.1f, DOOR_TEST_Z, 1.4f, 0.2f, 0.22f, true);
 
         // Low-ceiling crouch tunnel centered on the crouch alcove zone.
-        addBox(HUB_X, 1.1f, HUB_Z - 16.0f, 6.0f, 0.2f, 8.0f, true);
-        addBox(HUB_X - 3.1f, 0.55f, HUB_Z - 16.0f, 0.2f, 1.1f, 8.0f, true);
-        addBox(HUB_X + 3.1f, 0.55f, HUB_Z - 16.0f, 0.2f, 1.1f, 8.0f, true);
+        addBox(HUB_X, 1.1f, HUB_Z - ZONE_RING_OFFSET, 7.2f, 0.2f, 10.0f, true);
+        addBox(HUB_X - 3.7f, 0.55f, HUB_Z - ZONE_RING_OFFSET, 0.2f, 1.1f, 10.0f, true);
+        addBox(HUB_X + 3.7f, 0.55f, HUB_Z - ZONE_RING_OFFSET, 0.2f, 1.1f, 10.0f, true);
+    }
+
+    private void setupRuntimeDoorTest() {
+        runtimeDoorHingePosition.set(HUB_X - (DOOR_TEST_SPAN * 0.5f), 1.05f, DOOR_TEST_Z);
+        runtimeDoorController = new DoorController("runtime-door-test", runtimeDoorHingePosition, 2.2f);
+        runtimeDoorMesh = createCubeMesh(DOOR_TEST_SPAN, 2.1f, 0.12f);
+        refreshRuntimeDoorTransform();
+        // v2: register runtime door for raycast interactions and door-grab
+        interactableRegistry = new InteractableRegistry();
+        interactableRegistry.register(runtimeDoorController);
+        raycastInteractionSystem = new RaycastInteractionSystem(interactableRegistry);
+        doorGrabInteraction = new DoorGrabInteraction();
+    }
+
+    private void updateRuntimeDoorTest(float deltaSeconds) {
+        if (runtimeDoorController == null) {
+            return;
+        }
+
+        // Build a minimal EventContext for interactive updates
+        io.github.superteam.resonance.event.EventContext interactionContext = new io.github.superteam.resonance.event.EventContext(
+            runtimeDoorHingePosition,
+            camera.position,
+            elapsedSeconds,
+            soundPropagationOrchestrator,
+            null,
+            null,
+            null,
+            this::showRuntimeSubtitle
+        );
+
+        // Raycast interaction update
+        if (raycastInteractionSystem != null) {
+            InteractionResult interactionResult = raycastInteractionSystem.update(
+                camera.position,
+                camera.direction,
+                interactionContext
+            );
+            interactionPrompt = interactionPromptRenderer.formatPrompt(interactionResult);
+
+            if (doorGrabInteraction != null && raycastInteractionSystem.focused() instanceof DoorController focusedDoor) {
+                doorGrabInteraction.update(
+                    deltaSeconds,
+                    Gdx.input.getDeltaX(),
+                    Gdx.input.isButtonPressed(Input.Buttons.LEFT),
+                    focusedDoor,
+                    interactionContext
+                );
+            }
+        }
+
+        runtimeDoorController.update(deltaSeconds, interactionContext);
+        refreshRuntimeDoorTransform();
+    }
+
+    private void refreshRuntimeDoorTransform() {
+        if (runtimeDoorController == null) {
+            runtimeDoorTransform.idt();
+            return;
+        }
+
+        runtimeDoorTransform.idt()
+                .translate(runtimeDoorHingePosition)
+                .rotate(Vector3.Y, -runtimeDoorController.currentAngle())
+                .translate(DOOR_TEST_SPAN * 0.5f, 0f, 0f);
     }
 
     private void addBox(float centerX, float centerY, float centerZ, float width, float height, float depth,
@@ -901,18 +1225,18 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private boolean handleRuntimeInput() {
         // DEBUG KEY MAP
-        // F1  — Toggle graph debug markers
-        // F2  — Toggle blind radius debug overlay
-        // F3  — Reload runtime configs
-        // F4  — Toggle acoustic bounce rays
-        // F5  — Toggle VHS shader
-        // F6  — Toggle microphone input
-        // F7  — Trigger blind flare reveal
-        // F8  — Cycle diagnostic overlay tab
-        // F9  — Switch to multiplayer menu
-        // F10 — Switch to UniversalTestScene
-        // F11 — Switch to GltfMapTestScene
-        // F12 — Fire debug event flag
+        // F1  â€” Toggle graph debug markers
+        // F2  â€” Toggle blind radius debug overlay
+        // F3  â€” Reload runtime configs
+        // F4  â€” Toggle acoustic bounce rays
+        // F5  â€” Toggle VHS shader
+        // F6  â€” Toggle microphone input
+        // F7  â€” Trigger blind flare reveal
+        // F8  â€” Cycle diagnostic overlay tab
+        // F9  â€” Switch to multiplayer menu
+        // F10 â€” Switch to UniversalTestScene
+        // F11 â€” Switch to GltfMapTestScene
+        // F12 â€” Fire debug event flag
         if (Gdx.input.isKeyJustPressed(Input.Keys.F1)) {
             showGraphDebug = !showGraphDebug;
         }
@@ -923,6 +1247,7 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         if (Gdx.input.isKeyJustPressed(Input.Keys.F3)) {
             bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
+            captureBaseBodyCamSettings();
             blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
             blindEffectController.reloadConfig(blindEffectConfig);
         }
@@ -936,7 +1261,7 @@ public final class UniversalTestScene extends ScreenAdapter {
             bodyCamSettings.enabled = !bodyCamSettings.enabled;
         }
 
-        // INCON-01 — V is the canonical sonar-pulse key; X was a duplicate and is
+        // INCON-01 â€” V is the canonical sonar-pulse key; X was a duplicate and is
         // removed.
         if (Gdx.input.isKeyJustPressed(Input.Keys.V)) {
             firePlayerPulse();
@@ -982,11 +1307,67 @@ public final class UniversalTestScene extends ScreenAdapter {
             fireDebugEventFlag();
         }
 
+        // Quick demo keys for integrated systems
+        if (Gdx.input.isKeyJustPressed(Input.Keys.B)) {
+            if (dialogueSystem != null) dialogueSystem.showSubtitle("Demo subtitle from testbed.", 3.0f);
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.K)) {
+            if (saveSystem != null) {
+                io.github.superteam.resonance.save.SaveData sd = new io.github.superteam.resonance.save.SaveData();
+                sd.playerPosition = playerController.getPosition();
+                sd.playerSanity = sanitySystem.getSanity();
+                sd.savedAtMillis = TimeUtils.millis();
+                sd.savedAtDisplay = String.format("%1$tF %1$tT", sd.savedAtMillis);
+                saveSystem.save(sd);
+                showRuntimeSubtitle("Saved demo autosave.", 1.5f);
+            }
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.L)) {
+            if (saveSystem != null) {
+                io.github.superteam.resonance.save.SaveData loaded = saveSystem.load();
+                if (loaded != null) {
+                    showRuntimeSubtitle("Loaded save: " + loaded.saveSlotId + " @ " + loaded.savedAtDisplay, 2.5f);
+                } else {
+                    showRuntimeSubtitle("No save found.", 1.5f);
+                }
+            }
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.T)) {
+            if (roomTransitionSystem != null) {
+                roomTransitionSystem.triggerRoomTransition("DemoRoom");
+            }
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.N)) {
+            sanityEventDrain.queueDelta(-15f);
+            showRuntimeSubtitle("Queued sanity hit (-15).", 1.8f);
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.J)) {
+            emitSoundEventPulse(SoundEvent.CLAP_SHOUT, 0.95f);
+            showRuntimeSubtitle("Injected loud sound pulse.", 1.8f);
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.H)) {
+            if (storySystem != null) {
+                showRuntimeSubtitle("Story: " + storySystem.debugStatus(), 2.0f);
+            }
+        }
+
+        if (Gdx.input.isKeyJustPressed(Input.Keys.D)) {
+            if (debugConsole != null) {
+                debugConsole.executeLine("settings", new io.github.superteam.resonance.event.EventContext(
+                    camera.position, camera.position, elapsedSeconds, soundPropagationOrchestrator, null, null, null, this::showRuntimeSubtitle));
+            }
+        }
+
         // Remove runtime multiplayer debug shortcuts; H/C are reserved for menu and crouch.
 
         return false;
     }
-
     private void updateGameplaySystems(float deltaSeconds) {
         playerController.update(deltaSeconds);
         if (playerController.consumeJumpTriggered()) {
@@ -999,6 +1380,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         updateActiveZone(deltaSeconds);
 
         playerController.getPosition(playerPos);
+        updateRuntimeDoorTest(deltaSeconds);
         if (eventTriggerRuntime != null) {
             eventTriggerRuntime.update(deltaSeconds, playerPos, elapsedSeconds, soundPropagationOrchestrator);
         }
@@ -1027,12 +1409,53 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         lastSoundIntensity = Math.max(0f, lastSoundIntensity - (deltaSeconds * 0.9f));
         directorController.update(deltaSeconds);
+
+        DirectorController.DirectorSnapshot directorSnapshot = directorController.snapshot();
+        lightManager.setTier(toLightingTier(directorSnapshot.currentTier()));
+        lightManager.update(deltaSeconds);
+
         panicModel.setThreatDistanceMeters(30f);
         panicModel.setLoudSoundIntensity(lastSoundIntensity);
         // IMPROVE-09 — placeholder: always full health until enemy damage is wired up.
         // TODO: Replace with actual player health once EnemyController is implemented.
         panicModel.setHealth(100f, 100f);
         panicModel.update(deltaSeconds);
+
+        float estimatedEnemyDistance = MathUtils.lerp(20f, 2f, panicModel.currentPanicLevel());
+        SanitySystem.Context sanityContext = new SanitySystem.Context(
+            playerPos,
+            lightManager.exposureAt(playerPos),
+            estimatedEnemyDistance,
+            lastSoundIntensity,
+            elapsedSeconds
+        );
+        sanitySystem.update(deltaSeconds, sanityContext);
+        applySanityDrivenBodyCamEffects();
+
+        // Dialogue and room-transition updates (Group C/D demos)
+        if (dialogueSystem != null) {
+            dialogueSystem.update(deltaSeconds);
+        }
+        if (roomTransitionSystem != null) {
+            roomTransitionSystem.update(deltaSeconds, dialogueSystem);
+        }
+
+        float tierFactor = switch (directorSnapshot.currentTier()) {
+            case CALM -> 0.15f;
+            case TENSE -> 0.55f;
+            case PANICKED -> 1.0f;
+        };
+        jumpScareDirector.update(deltaSeconds, sanitySystem.getSanity(), tierFactor, lastSoundIntensity);
+        JumpScare triggeredScare = jumpScareDirector.pollTriggeredScare();
+        if (triggeredScare != null) {
+            showRuntimeSubtitle("[Scare] " + triggeredScare.message(), 1.8f);
+            if (triggeredScare.type() == io.github.superteam.resonance.scare.ScareType.FLASH
+                    || triggeredScare.type() == io.github.superteam.resonance.scare.ScareType.ENVIRONMENT) {
+                blindEffectController.triggerFlareReveal();
+            }
+            sanityEventDrain.queueDelta(-1.25f * triggeredScare.intensity());
+        }
+
         blindEffectController.update(deltaSeconds);
 
         if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE) {
@@ -1050,11 +1473,40 @@ public final class UniversalTestScene extends ScreenAdapter {
                 rp.update(deltaSeconds);
                 if (rp.speakingTimer > 0) {
                     rp.speakingTimer -= deltaSeconds;
-                    if (rp.speakingTimer <= 0)
+                    if (rp.speakingTimer <= 0) {
                         rp.isSpeaking = false;
+                    }
                 }
             }
         }
+    }
+
+    private boolean tryInteractRuntimeDoor() {
+        if (!isFacingRuntimeDoor() || runtimeDoorController == null) {
+            return false;
+        }
+
+        runtimeDoorController.onInteract(null);
+        emitSoundEventPulse(SoundEvent.DOOR_SLAM, 0.48f);
+        showRuntimeSubtitle("Door runtime test toggled.", 1.0f);
+        return true;
+    }
+
+    private boolean isFacingRuntimeDoor() {
+        if (runtimeDoorController == null) {
+            return false;
+        }
+
+        runtimeDoorFaceTarget.set(runtimeDoorHingePosition).sub(camera.position);
+        float distanceSquared = runtimeDoorFaceTarget.len2();
+        if (distanceSquared <= 0.0001f || distanceSquared > (DOOR_INTERACT_RANGE * DOOR_INTERACT_RANGE)) {
+            return false;
+        }
+
+        float distance = (float) Math.sqrt(distanceSquared);
+        runtimeDoorFaceTarget.scl(1f / distance);
+        float facingDot = runtimeDoorFaceTarget.dot(tmpItemDirection.set(camera.direction).nor());
+        return facingDot >= DOOR_INTERACT_FACING_DOT;
     }
 
     private void stepPhysicsWorld(float deltaSeconds) {
@@ -1142,7 +1594,7 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
             activeZone = nearest;
             activeZone.onEnter();
-            // IMPROVE-08 — soft acoustic ping on zone enter: reveals new zone nodes and
+            // IMPROVE-08 â€” soft acoustic ping on zone enter: reveals new zone nodes and
             // hints to Director.
             emitItemEvent(SoundEvent.FOOTSTEP, playerPos, 0.15f);
         }
@@ -1271,6 +1723,13 @@ public final class UniversalTestScene extends ScreenAdapter {
             mesh.render(worldShader, GL20.GL_TRIANGLES);
         }
 
+        if (runtimeDoorMesh != null && runtimeDoorController != null) {
+            worldShader.setUniformf("u_baseColor", 0.78f, 0.68f, 0.36f);
+            worldShader.setUniformMatrix("u_modelTrans", runtimeDoorTransform);
+            runtimeDoorMesh.render(worldShader, GL20.GL_TRIANGLES);
+            worldShader.setUniformf("u_baseColor", 0.68f, 0.74f, 0.80f);
+        }
+
         for (CarriableItem carriableItem : worldCarriableItems) {
             if (carriableItem.state() != CarriableItem.ItemState.WORLD) {
                 continue;
@@ -1317,7 +1776,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 .rotate(Vector3.X, -playerController.getPitch())
                 .scale(VIEW_MODEL_SCALE, VIEW_MODEL_SCALE, VIEW_MODEL_SCALE);
 
-        // IMPROVE-10 — clear depth so the view model renders in front of world geometry
+        // IMPROVE-10 â€” clear depth so the view model renders in front of world geometry
         // but is still subject to HUD compositing. Avoids depth-test disable artifacts.
         Gdx.gl.glClear(GL20.GL_DEPTH_BUFFER_BIT);
         Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
@@ -1337,7 +1796,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 blindEffectController.fogEndMeters(),
                 blindEffectController.fogStrength(),
                 blindEffectController.fogColor());
-        // INCON-06 / Fix L — use per-item-type mesh; fall back to unit cube for unknown
+        // INCON-06 / Fix L â€” use per-item-type mesh; fall back to unit cube for unknown
         // types.
         Mesh viewModelMesh = viewModelMeshes.getOrDefault(heldItem.definition().itemType(), playerViewModelMesh);
         viewModelMesh.render(playerShaderProgram, GL20.GL_TRIANGLES);
@@ -1406,14 +1865,19 @@ public final class UniversalTestScene extends ScreenAdapter {
         ConsumablePickup focusedConsumable = carrySystem.isHoldingItem() || focusedCarriable != null
                 ? null
                 : findNearestFacingConsumable();
+        boolean doorTargetVisible = !carrySystem.isHoldingItem()
+            && raycastInteractionSystem != null
+            && raycastInteractionSystem.focused() instanceof DoorController;
 
         shapeRenderer.setProjectionMatrix(hudProjection);
-        renderCrosshair(focusedCarriable != null || focusedConsumable != null);
+        renderCrosshair(doorTargetVisible || focusedCarriable != null || focusedConsumable != null);
         renderInventoryBar();
         drawControlsLegend();
 
-        drawInteractionPrompt(focusedCarriable, focusedConsumable);
+        drawInteractionPrompt(focusedCarriable, focusedConsumable, doorTargetVisible);
         drawRuntimeSubtitle();
+
+        if (dialogueSystem != null) dialogueSystem.render(hudBatch);
         diagnosticOverlay.draw(
                 hudBatch,
                 hudFont,
@@ -1433,7 +1897,21 @@ public final class UniversalTestScene extends ScreenAdapter {
                 multiplayerManager);
 
             renderJoinBanners();
-    }
+
+            // Render dialogue subtitles if present
+            if (dialogueSystem != null) {
+                dialogueSystem.render(hudBatch);
+            }
+
+            // Render room transition fade overlay on top
+            if (roomTransitionSystem != null && roomTransitionSystem.fadeAlpha() > 0f) {
+                float a = roomTransitionSystem.fadeAlpha();
+                shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+                shapeRenderer.setColor(0f, 0f, 0f, a);
+                shapeRenderer.rect(0f, 0f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+                shapeRenderer.end();
+            }
+        }
 
     private void drawRuntimeSubtitle() {
         if (runtimeSubtitleRemaining <= 0f || runtimeSubtitleText == null || runtimeSubtitleText.isBlank()) {
@@ -1493,12 +1971,17 @@ public final class UniversalTestScene extends ScreenAdapter {
         hudBatch.end();
     }
 
-    private void drawInteractionPrompt(CarriableItem focusedCarriable, ConsumablePickup focusedConsumable) {
+        // (Dialogue and transition overlays can be rendered here.)
+
+    private void drawInteractionPrompt(CarriableItem focusedCarriable, ConsumablePickup focusedConsumable,
+            boolean doorTargetVisible) {
         String promptText = null;
         if (carrySystem.isHoldingItem()) {
             promptText = "[RMB] Throw   [F] Drop   [TAB] Stash";
         } else {
-            if (focusedCarriable != null) {
+            if (doorTargetVisible && interactionPrompt != null && !interactionPrompt.isBlank()) {
+                promptText = interactionPrompt;
+            } else if (focusedCarriable != null) {
                 promptText = "[F] Pick up " + focusedCarriable.definition().displayName();
             } else if (focusedConsumable != null) {
                 promptText = "[F] Use " + ItemDefinition.create(focusedConsumable.itemType).displayName();
@@ -1574,7 +2057,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         tmpRayDirection.set(camera.direction).nor();
         tmpRayEnd.set(camera.position).mulAdd(tmpRayDirection, PICKUP_RANGE);
 
-        // IMPROVE-01 — reuse the pre-allocated callback; reset hit state each call.
+        // IMPROVE-01 â€” reuse the pre-allocated callback; reset hit state each call.
         if (cachedRayCallback == null) {
             cachedRayCallback = new ClosestRayResultCallback(camera.position, tmpRayEnd);
         }
@@ -1751,13 +2234,29 @@ public final class UniversalTestScene extends ScreenAdapter {
         String line3 = "[V] Sonar pulse (keyboard)     [F6] Toggle mic     [F1] Toggle graph debug";
         String line4 = "[F2] Toggle blind radius debug [F4] Toggle bounce rays  [F5] Toggle VHS shader";
         String line5 = "[F3] Reload configs [F7] Trigger flare [F8] Cycle debug tab [F9/F10] Switch screens";
-        String line6 = "Crouch tunnel: (" + (int) HUB_X + ", " + (int) (HUB_Z - 16f) + ")  Sound zone: ("
-            + (int) HUB_X + ", " + (int) (HUB_Z + 16f) + ")  Blind zone: (" + (int) HUB_X + ", "
-            + (int) (HUB_Z + 32f) + ")";
+        String line6 = "Door test: (" + (int) HUB_X + ", " + (int) DOOR_TEST_Z + ")  Crouch: ("
+            + (int) HUB_X + ", " + (int) (HUB_Z - ZONE_RING_OFFSET) + ")  Sound: (" + (int) HUB_X + ", "
+            + (int) (HUB_Z + ZONE_RING_OFFSET) + ")";
         String line7 = "[F12] Debug event flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("debug.event.flag") ? "ON" : "OFF");
         String line8 = "[Zone] Sound event flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("zone.sound.entered") ? "ON" : "OFF");
         String line9 = "[Zone] Event chain flag: " + (eventTriggerRuntime != null && eventTriggerRuntime.flag("zone.sound.chain.completed") ? "ON" : "OFF");
         String line10 = directorController.snapshot().hudLine();
+        String line11 = "[Door] Runtime test state: "
+            + (runtimeDoorController != null && runtimeDoorController.currentAngle() > 40f ? "OPEN" : "CLOSED");
+        String line12 = "[Light] Tier=" + lightManager.tier() + "  Count=" + lightManager.lightCount()
+            + "  Exposure=" + String.format("%.2f", lightManager.exposureAt(playerPos));
+        String line13 = "[Sanity] " + String.format("%.1f", sanitySystem.getSanity())
+            + "  Tier=" + sanitySystem.tier()
+            + "  Halluc=" + String.format("%.2f", sanityHallucinationEffect.pressure());
+        String line14 = "[Scare] Tension=" + String.format("%.1f", jumpScareDirector.tension())
+            + "  Cooldown=" + String.format("%.1fs", jumpScareDirector.cooldownRemaining());
+        String line15 = "[Settings] FOV=" + settingsSystem.data().targetFov
+            + " Sens=" + String.format("%.2f", settingsSystem.data().mouseSensitivity)
+            + " Vol=" + String.format("%.2f/%.2f/%.2f",
+                settingsSystem.data().masterVolume,
+                settingsSystem.data().musicVolume,
+                settingsSystem.data().sfxVolume);
+        String line16 = "[B/N/J/H/D] Subtitle / sanity hit / loud pulse / story status / settings";
 
         float padding = 12.0f;
         float lineHeight = 14.0f;
@@ -1768,6 +2267,12 @@ public final class UniversalTestScene extends ScreenAdapter {
                 Math.max(line1.length(), Math.max(line2.length(),
                     Math.max(line3.length(), Math.max(line4.length(), Math.max(line5.length(), Math.max(line6.length(), Math.max(line7.length(), Math.max(line8.length(), Math.max(line9.length(), line10.length())))))))))
                         * 6.2f);
+        textWidth = Math.max(textWidth, line11.length() * 6.2f);
+        textWidth = Math.max(textWidth, line12.length() * 6.2f);
+        textWidth = Math.max(textWidth, line13.length() * 6.2f);
+        textWidth = Math.max(textWidth, line14.length() * 6.2f);
+        textWidth = Math.max(textWidth, line15.length() * 6.2f);
+        textWidth = Math.max(textWidth, line16.length() * 6.2f);
         float startX = Gdx.graphics.getWidth() - textWidth - 16.0f;
 
         hudBatch.begin();
@@ -1782,6 +2287,12 @@ public final class UniversalTestScene extends ScreenAdapter {
         hudFont.draw(hudBatch, line8, startX, startY - (lineHeight * 7f));
         hudFont.draw(hudBatch, line9, startX, startY - (lineHeight * 8f));
         hudFont.draw(hudBatch, line10, startX, startY - (lineHeight * 9f));
+        hudFont.draw(hudBatch, line11, startX, startY - (lineHeight * 10f));
+        hudFont.draw(hudBatch, line12, startX, startY - (lineHeight * 11f));
+        hudFont.draw(hudBatch, line13, startX, startY - (lineHeight * 12f));
+        hudFont.draw(hudBatch, line14, startX, startY - (lineHeight * 13f));
+        hudFont.draw(hudBatch, line15, startX, startY - (lineHeight * 14f));
+        hudFont.draw(hudBatch, line16, startX, startY - (lineHeight * 15f));
         hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
         hudBatch.end();
     }
@@ -2103,7 +2614,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private boolean tryPickupNearestConsumable() {
         ConsumablePickup nearest = null;
         float nearestDistanceSquared = Float.POSITIVE_INFINITY;
-        // INCON-05 — consumable pickup now requires the same facing check as carriable
+        // INCON-05 â€” consumable pickup now requires the same facing check as carriable
         // pickup.
         tmpItemDirection.set(camera.direction).nor();
 
@@ -2592,6 +3103,11 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
         }
 
+        if (runtimeDoorMesh != null) {
+            runtimeDoorMesh.dispose();
+            runtimeDoorMesh = null;
+        }
+
         for (ObjectMap.Entry<CarriableItem, Mesh> entry : carriableMeshes.entries()) {
             if (entry.value != null) {
                 entry.value.dispose();
@@ -2647,14 +3163,14 @@ public final class UniversalTestScene extends ScreenAdapter {
         if (playerViewModelMesh != null) {
             playerViewModelMesh.dispose();
         }
-        // INCON-06/Fix L — dispose per-item view model meshes.
+        // INCON-06/Fix L â€” dispose per-item view model meshes.
         for (Mesh viewMesh : viewModelMeshes.values()) {
             if (viewMesh != null) {
                 viewMesh.dispose();
             }
         }
         viewModelMeshes.clear();
-        // IMPROVE-01 — dispose the cached ray callback.
+        // IMPROVE-01 â€” dispose the cached ray callback.
         if (cachedRayCallback != null) {
             cachedRayCallback.dispose();
             cachedRayCallback = null;
@@ -2746,3 +3262,4 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
     }
 }
+

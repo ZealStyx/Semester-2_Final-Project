@@ -5,7 +5,8 @@ import com.badlogic.gdx.Screen;
 
 import io.github.superteam.resonance.devTest.FilePicker;
 import io.github.superteam.resonance.devTest.ModelDebugScreen;
-import io.github.superteam.resonance.devTest.universal.UniversalTestScene;
+import io.github.superteam.resonance.devTest.universal.UniversalTestScreen;
+import io.github.superteam.resonance.screens.GameScreen;
 import io.github.superteam.resonance.devTest.universal.MultiplayerTestMenuScreen;
 
 /** {@link com.badlogic.gdx.ApplicationListener} implementation shared by all platforms. */
@@ -28,7 +29,7 @@ public class Main extends Game {
         }
 
         if (Boolean.getBoolean("resonance.universalTest")) {
-            setScreen(new UniversalTestScene());
+            setScreen(new UniversalTestScreen());
             return;
         }
 

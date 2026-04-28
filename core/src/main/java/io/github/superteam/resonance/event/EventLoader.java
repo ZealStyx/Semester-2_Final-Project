@@ -107,6 +107,28 @@ public final class EventLoader {
                 actionValue.getString("text", null),
                 actionValue.getFloat("duration", actionValue.getFloat("durationSeconds", 2f))
             );
+            case "PROPAGATE_GRAPH" -> new io.github.superteam.resonance.event.actions.PropagateGraphAction(
+                actionValue.getString("soundEvent", actionValue.getString("soundEventId", null))
+            );
+            case "PLAY_ANIMATION" -> new io.github.superteam.resonance.event.actions.PlayAnimationAction(
+                actionValue.getString("targetId", null),
+                actionValue.getString("animation", actionValue.getString("animationName", null))
+            );
+            case "TRIGGER_JUMPSCARE" -> new io.github.superteam.resonance.event.actions.TriggerJumpScareAction(
+                actionValue.getString("scareId", null)
+            );
+            case "LOG" -> new io.github.superteam.resonance.event.actions.LogAction(
+                actionValue.getString("message", null)
+            );
+            case "STORY_EVENT", "ADVANCE_STORY", "ADVANCE_BEAT" -> new io.github.superteam.resonance.event.actions.StoryEventAction(
+                actionValue.getString("beatId", actionValue.getString("onCompleteEvent", null))
+            );
+            case "CHECKPOINT", "SAVE_CHECKPOINT" -> new io.github.superteam.resonance.event.actions.CheckpointAction(
+                actionValue.getString("checkpointId", actionValue.getString("checkpoint", null))
+            );
+            case "TRANSITION", "TRANSITION_LEVEL", "ROOM_TRANSITION" -> new io.github.superteam.resonance.event.actions.TransitionLevelAction(
+                actionValue.getString("roomName", actionValue.getString("targetRoom", null))
+            );
             default -> null;
         };
     }

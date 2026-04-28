@@ -3,6 +3,7 @@ package io.github.superteam.resonance.event;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Timer;
 import io.github.superteam.resonance.audio.GameAudioSystem;
+import io.github.superteam.resonance.player.InventorySystem;
 import io.github.superteam.resonance.sound.SoundPropagationOrchestrator;
 import java.util.function.BiConsumer;
 
@@ -19,6 +20,15 @@ public final class EventContext {
     private final EventState eventState;
     private final BiConsumer<String, Float> subtitleSink;
     private float sequenceDelaySeconds;
+    // Optional systems (nullable)
+    private final io.github.superteam.resonance.sanity.SanitySystem sanitySystem;
+    private final io.github.superteam.resonance.scare.JumpScareDirector jumpScareDirector;
+    private final io.github.superteam.resonance.dialogue.DialogueSystem dialogueSystem;
+    private final io.github.superteam.resonance.debug.DebugConsole debugConsole;
+    private final io.github.superteam.resonance.story.StorySystem storySystem;
+    private final InventorySystem inventorySystem;
+    private final io.github.superteam.resonance.lighting.FlashlightController flashlightController;
+    private final io.github.superteam.resonance.behavior.BehaviorSystem behaviorSystem;
 
     public EventContext(
         Vector3 triggerPosition,
@@ -30,6 +40,28 @@ public final class EventContext {
         EventState eventState,
         BiConsumer<String, Float> subtitleSink
     ) {
+        this(triggerPosition, playerPosition, elapsedSeconds, propagationOrchestrator, audioSystem, eventBus, eventState, subtitleSink,
+            null, null, null, null, null, null, null, null);
+    }
+
+    public EventContext(
+        Vector3 triggerPosition,
+        Vector3 playerPosition,
+        float elapsedSeconds,
+        SoundPropagationOrchestrator propagationOrchestrator,
+        GameAudioSystem audioSystem,
+        EventBus eventBus,
+        EventState eventState,
+        BiConsumer<String, Float> subtitleSink,
+        io.github.superteam.resonance.sanity.SanitySystem sanitySystem,
+        io.github.superteam.resonance.scare.JumpScareDirector jumpScareDirector,
+        io.github.superteam.resonance.dialogue.DialogueSystem dialogueSystem,
+        io.github.superteam.resonance.debug.DebugConsole debugConsole,
+        io.github.superteam.resonance.story.StorySystem storySystem,
+        InventorySystem inventorySystem,
+        io.github.superteam.resonance.lighting.FlashlightController flashlightController,
+        io.github.superteam.resonance.behavior.BehaviorSystem behaviorSystem
+    ) {
         this.triggerPosition = triggerPosition == null ? new Vector3() : new Vector3(triggerPosition);
         this.playerPosition = playerPosition == null ? new Vector3() : new Vector3(playerPosition);
         this.elapsedSeconds = Math.max(0f, elapsedSeconds);
@@ -38,6 +70,14 @@ public final class EventContext {
         this.eventBus = eventBus;
         this.eventState = eventState;
         this.subtitleSink = subtitleSink;
+        this.sanitySystem = sanitySystem;
+        this.jumpScareDirector = jumpScareDirector;
+        this.dialogueSystem = dialogueSystem;
+        this.debugConsole = debugConsole;
+        this.storySystem = storySystem;
+        this.inventorySystem = inventorySystem;
+        this.flashlightController = flashlightController;
+        this.behaviorSystem = behaviorSystem;
     }
 
     public Vector3 triggerPosition() {
@@ -111,7 +151,25 @@ public final class EventContext {
             audioSystem,
             eventBus,
             eventState,
-            subtitleSink
+            subtitleSink,
+            sanitySystem,
+            jumpScareDirector,
+            dialogueSystem,
+            debugConsole,
+            storySystem,
+            inventorySystem,
+            flashlightController,
+            behaviorSystem
         );
     }
+
+    // Nullable system accessors — added so EventActions can reference systems
+    public io.github.superteam.resonance.sanity.SanitySystem sanitySystem() { return sanitySystem; }
+    public io.github.superteam.resonance.scare.JumpScareDirector jumpScareDirector() { return jumpScareDirector; }
+    public io.github.superteam.resonance.dialogue.DialogueSystem dialogueSystem() { return dialogueSystem; }
+    public io.github.superteam.resonance.debug.DebugConsole debugConsole() { return debugConsole; }
+    public io.github.superteam.resonance.story.StorySystem storySystem() { return storySystem; }
+    public InventorySystem inventorySystem() { return inventorySystem; }
+    public io.github.superteam.resonance.lighting.FlashlightController flashlightController() { return flashlightController; }
+    public io.github.superteam.resonance.behavior.BehaviorSystem behaviorSystem() { return behaviorSystem; }
 }

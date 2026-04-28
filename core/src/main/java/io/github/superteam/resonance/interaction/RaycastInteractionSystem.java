@@ -36,19 +36,22 @@ public final class RaycastInteractionSystem {
         return focused;
     }
 
-    public void update(Vector3 origin, Vector3 forward, EventContext eventContext) {
+    public InteractionResult update(Vector3 origin, Vector3 forward, EventContext eventContext) {
         if (interactableRegistry == null || origin == null || forward == null) {
             focused = null;
-            return;
+            return InteractionResult.NONE;
         }
 
         focused = interactableRegistry.findBestTarget(origin, forward, maxDistance, minFacingDot);
         if (focused == null) {
-            return;
+            return InteractionResult.NONE;
         }
 
-        if (Gdx.input.isKeyJustPressed(interactKeycode) && focused.canInteract(eventContext)) {
+        boolean canInteract = focused.canInteract(eventContext);
+        if (Gdx.input.isKeyJustPressed(interactKeycode) && canInteract) {
             focused.onInteract(eventContext);
         }
+
+        return new InteractionResult(focused, canInteract, interactKeycode);
     }
 }

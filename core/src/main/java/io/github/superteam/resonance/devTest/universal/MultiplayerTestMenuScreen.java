@@ -314,7 +314,7 @@ public class MultiplayerTestMenuScreen extends ScreenAdapter {
         System.out.println("Launching with config: " + config);
 
         // Create scene with launch config
-        UniversalTestScene scene = new UniversalTestScene(config);
+        UniversalTestScreen scene = new UniversalTestScreen(config);
 
         // Transition to scene
         ((Game) Gdx.app.getApplicationListener()).setScreen(scene);

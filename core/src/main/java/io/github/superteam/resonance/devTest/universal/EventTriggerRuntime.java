@@ -11,6 +11,14 @@ import io.github.superteam.resonance.trigger.TriggerEvaluationContext;
 import io.github.superteam.resonance.trigger.TriggerEvaluator;
 import io.github.superteam.resonance.trigger.TriggerLoader;
 import java.util.function.BiConsumer;
+import io.github.superteam.resonance.sanity.SanitySystem;
+import io.github.superteam.resonance.scare.JumpScareDirector;
+import io.github.superteam.resonance.dialogue.DialogueSystem;
+import io.github.superteam.resonance.debug.DebugConsole;
+import io.github.superteam.resonance.story.StorySystem;
+import io.github.superteam.resonance.player.InventorySystem;
+import io.github.superteam.resonance.lighting.FlashlightController;
+import io.github.superteam.resonance.behavior.BehaviorSystem;
 
 /**
  * Shared trigger and event runtime for test scenes.
@@ -21,6 +29,15 @@ public final class EventTriggerRuntime {
     private final TriggerEvaluator triggerEvaluator;
     private final GameAudioSystem eventAudioSystem;
     private final BiConsumer<String, Float> subtitleSink;
+    // Optional systems that can be configured by the hosting scene.
+    private SanitySystem sanitySystem;
+    private JumpScareDirector jumpScareDirector;
+    private DialogueSystem dialogueSystem;
+    private DebugConsole debugConsole;
+    private StorySystem storySystem;
+    private InventorySystem inventorySystem;
+    private FlashlightController flashlightController;
+    private BehaviorSystem behaviorSystem;
 
     private EventTriggerRuntime(
         EventBus eventBus,
@@ -45,6 +62,27 @@ public final class EventTriggerRuntime {
             new GameAudioSystem(),
             subtitleSink
         );
+    }
+
+    /** Configure nullable systems which will be supplied into generated EventContext instances. */
+    public void setOptionalSystems(
+        SanitySystem sanity,
+        JumpScareDirector jumpScare,
+        DialogueSystem dialogue,
+        DebugConsole debug,
+        StorySystem story,
+        InventorySystem inventory,
+        FlashlightController flashlight,
+        BehaviorSystem behavior
+    ) {
+        this.sanitySystem = sanity;
+        this.jumpScareDirector = jumpScare;
+        this.dialogueSystem = dialogue;
+        this.debugConsole = debug;
+        this.storySystem = story;
+        this.inventorySystem = inventory;
+        this.flashlightController = flashlight;
+        this.behaviorSystem = behavior;
     }
 
     public void update(
@@ -89,7 +127,15 @@ public final class EventTriggerRuntime {
             eventAudioSystem,
             eventBus,
             eventState,
-            subtitleSink
+            subtitleSink,
+            sanitySystem,
+            jumpScareDirector,
+            dialogueSystem,
+            debugConsole,
+            storySystem,
+            inventorySystem,
+            flashlightController,
+            behaviorSystem
         );
         eventBus.fire(eventId, context, eventState);
     }
