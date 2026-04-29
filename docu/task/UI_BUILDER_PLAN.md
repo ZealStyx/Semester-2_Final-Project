@@ -67,6 +67,8 @@ The queue is the only shared state between the two threads. No locks are held on
 
 ---
 
+---
+
 ## ⚠️ Using the UI Builder from `core/screen/MainMenuScreen.java`
 
 ### The circular dependency problem

@@ -13,6 +13,8 @@ This plan addresses two UI-related concerns:
 1. **Dev/Debug UI Reorganization** - The current debug information display has become scattered and confusing. Needs consolidation into a clean, organized system.
 2. **Main Game UI Design** - Create the primary in-game HUD with player stats, hotbar, objectives, and debug toggle functionality.
 
+The player inventory/hotbar should be expanded to **6 slots** so the HUD, key bindings, and inventory system stay consistent across the game.
+
 ---
 
 ## Part 1: Dev/Debug UI Reorganization
@@ -32,6 +34,54 @@ Based on codebase inspection, debug information is currently scattered across:
 - No consistent positioning or styling
 - No toggle mechanism
 - Information overload when multiple debug systems active
+
+### Current Debug / Test Controls
+
+These are the current project-wide shortcuts already present in the codebase and should be treated as the canonical debug control set for this plan.
+
+| Key | Action | Location |
+|-----|--------|----------|
+| `Ctrl + R` | Reload the current map/test scene | `UniversalTestScene` |
+| `F1` | Toggle graph debug markers | `UniversalTestScene`, `GltfMapTestScene` |
+| `F2` | Toggle blind radius debug overlay | `UniversalTestScene`, `GltfMapTestScene` |
+| `F3` | Reload runtime configs | `UniversalTestScene`, `GltfMapTestScene` |
+| `F4` | Toggle acoustic bounce rays | `UniversalTestScene`, `GltfMapTestScene` |
+| `F5` | Toggle VHS shader | `UniversalTestScene`, `GltfMapTestScene` |
+| `V` | Fire sonar pulse | `UniversalTestScene`, `GltfMapTestScene` |
+| `F6` | Toggle microphone input | `UniversalTestScene`, `GltfMapTestScene` |
+| `F7` | Trigger blind flare reveal | `UniversalTestScene`, `GltfMapTestScene` |
+| `F8` | Cycle diagnostic overlay tab | `TabCycler` |
+| `` ` `` | Open debug console hint / prompt | `UniversalTestScene` |
+| `F9` | Switch to multiplayer menu | `UniversalTestScene`, `GltfMapTestScene` |
+| `F10` | Switch to `UniversalTestScene` | `UniversalTestScene`, `GltfMapTestScene` |
+| `F11` | Switch to `GltfMapTestScene` | `UniversalTestScene`, `GltfMapTestScene` |
+| `F12` | Fire debug event flag | `UniversalTestScene`, `GltfMapTestScene` |
+| `B` | Show demo subtitle | `UniversalTestScene` |
+| `K` | Save demo autosave | `UniversalTestScene` |
+| `L` | Toggle flashlight | `UniversalTestScene` |
+| `T` | Trigger room transition | `UniversalTestScene` |
+| `N` | Queue sanity hit | `UniversalTestScene` |
+| `J` | Inject loud sound pulse | `UniversalTestScene` |
+| `H` | Show story debug status | `UniversalTestScene` |
+| `D` | Execute the `settings` debug command | `UniversalTestScene` |
+| `Esc` | Exit the multiplayer test menu | `MultiplayerTestMenuScreen` |
+| `H` | Host a multiplayer session | `MultiplayerTestMenuScreen` |
+| `U` | Launch the offline universal integration test | `MultiplayerTestMenuScreen` |
+| `C` | Open the client connect flow | `MultiplayerTestMenuScreen` |
+| `O` | Launch offline mode | `MultiplayerTestMenuScreen` |
+| `G` | Launch the glTF map test offline | `MultiplayerTestMenuScreen` |
+| `B` | Return to mode select from client connect | `MultiplayerTestMenuScreen` |
+| `D` | Discover LAN hosts | `MultiplayerTestMenuScreen` |
+| `Up` / `Down` | Select a discovered host | `MultiplayerTestMenuScreen` |
+| `Enter` | Connect / confirm the entered IP | `MultiplayerTestMenuScreen` |
+| `Backspace` | Delete the last character in the IP field | `MultiplayerTestMenuScreen` |
+| `0`-`9` / `.` | Enter a manual IP address | `MultiplayerTestMenuScreen` |
+| `0` / `Numpad 0` | Toggle fly mode | `FlyModeController` |
+| `W` / `A` / `S` / `D` | Move in fly mode | `FlyModeController` |
+| `Space` | Move up in fly mode | `FlyModeController` |
+| `Shift` | Move down in fly mode | `FlyModeController` |
+| `Ctrl` | Sprint in fly mode | `FlyModeController` |
+| `G` | Open the full `GameScreen` gameplay test | `UniversalTestScreen` |
 
 ### Proposed Architecture
 
@@ -533,7 +583,7 @@ import io.github.superteam.resonance.ui.widgets.HotbarSlot;
 import io.github.superteam.resonance.ui.GameUISkin;
 
 /**
- * 6-slot hotbar for inventory items.
+ * 6-slot hotbar for the player inventory.
  */
 public final class Hotbar extends Table {
     
@@ -1111,11 +1161,67 @@ The following assets should be created (placeholder colors used in code):
 
 ## Part 6: Key Bindings
 
+### Gameplay Controls
+
 | Action | Key Combination |
 |--------|-----------------|
-| Toggle Debug UI | Ctrl + F12 |
+| Move Forward/Backward | W / S |
+| Move Left/Right | A / D |
+| Jump | Space |
+| Crouch | C |
+| Sprint | Shift (Left/Right) |
+| Slow Walk | Ctrl (Left/Right) |
+| Interact | F |
+| Flashlight | L |
+| Hold Breath | Alt (Left) |
+| Console | ` (Grave/Backtick) |
 | Hotbar Slot 1-6 | 1, 2, 3, 4, 5, 6 |
 | Use Item | Left Click (when slot selected) |
+
+### Debug/Developer Controls
+
+| Action | Key Combination | Location |
+|--------|-----------------|----------|
+| **Toggle Debug UI** | Ctrl + F12 | Proposed central debug manager |
+| Reload current map/test scene | Ctrl + R | UniversalTestScene |
+| Toggle graph debug markers | F1 | UniversalTestScene, GltfMapTestScene |
+| Toggle blind radius debug overlay | F2 | UniversalTestScene, GltfMapTestScene |
+| Reload runtime configs | F3 | UniversalTestScene, GltfMapTestScene |
+| Toggle acoustic bounce rays | F4 | UniversalTestScene, GltfMapTestScene |
+| Toggle VHS shader | F5 | UniversalTestScene, GltfMapTestScene |
+| Toggle microphone input | F6 | UniversalTestScene, GltfMapTestScene |
+| Trigger blind flare reveal | F7 | UniversalTestScene, GltfMapTestScene |
+| Cycle diagnostic overlay tab | F8 | TabCycler |
+| Switch to multiplayer menu | F9 | UniversalTestScene, GltfMapTestScene |
+| Switch to UniversalTestScene | F10 | UniversalTestScene, GltfMapTestScene |
+| Switch to GltfMapTestScene | F11 | UniversalTestScene, GltfMapTestScene |
+| Fire debug event flag | F12 | UniversalTestScene, GltfMapTestScene |
+| Fire player pulse (sonar) | V | UniversalTestScene, GltfMapTestScene |
+| Open debug console | ` (Grave/Backtick) | UniversalTestScene |
+| Open full GameScreen (gameplay test) | G | UniversalTestScreen |
+| Inventory slots | 1-6 | Player inventory / hotbar |
+
+### Fly Mode Controls (FlyModeController)
+
+| Action | Key Combination |
+|--------|-----------------|
+| Toggle fly mode | 0 / Numpad 0 |
+| Move forward/backward | W / S |
+| Move left/right | A / D |
+| Move up | Space |
+| Move down | Shift (Left/Right) |
+| Sprint | Ctrl (Left/Right) |
+
+### Diagnostic Overlay Tabs (F8 cycles through)
+
+| Tab Name | Description |
+|----------|-------------|
+| PERFORMANCE | FPS, memory, timing data |
+| SYSTEM_STATE | Game system states |
+| MIC_STAMINA | Microphone and stamina graphs |
+| ZONE | Current active zone info |
+| NETWORK | Multiplayer status |
+| CONTROLS | Control help display |
 
 ---
 

@@ -12,8 +12,6 @@ import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
-import io.github.superteam.resonance.interactable.door.DoorController;
-import io.github.superteam.resonance.interactable.door.DoorLockState;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,8 +25,7 @@ public class TestMapBuilder {
     private static final float DEFAULT_WALL_THICKNESS = 0.3f;
     private static final float DEFAULT_FLOOR_THICKNESS = 0.1f;
     private static final float DEFAULT_DOOR_HEIGHT = 2.1f;
-    private static final float DEFAULT_DOOR_WIDTH = 1.2f;
-    private static final float WALL_HEIGHT_CROUCH = 1.5f;
+    private static final float DEFAULT_DOOR_WIDTH = 2.0f;
     private static final float WALL_HEIGHT_NORMAL = 2.8f;
 
     private final Array<BoundingBox> worldColliders = new Array<>();
@@ -133,9 +130,10 @@ public class TestMapBuilder {
 
     private void parseWallWithDoor(float x1, float z1, float x2, float z2, float wallHeight,
                                    float thickness, JsonValue doorJson) {
-        float doorPosition = doorJson.getFloat("position", 0.5f);
-        float doorWidth = doorJson.getFloat("width", DEFAULT_DOOR_WIDTH);
-        float doorHeight = doorJson.getFloat("height", DEFAULT_DOOR_HEIGHT);
+        float hingePosition = doorJson.getFloat("position", 0f);
+        String orientation = doorJson.getString("orientation", "forward");
+        float doorWidth = DEFAULT_DOOR_WIDTH;
+        float doorHeight = DEFAULT_DOOR_HEIGHT;
         boolean locked = doorJson.getBoolean("locked", false);
 
         // Calculate wall vector and length
@@ -153,17 +151,18 @@ public class TestMapBuilder {
         float dirX = dx / wallLength;
         float dirZ = dz / wallLength;
 
-        // Calculate door center position along wall
-        float doorCenterDist = doorPosition * wallLength;
-        float doorCenterX = x1 + dirX * doorCenterDist;
-        float doorCenterZ = z1 + dirZ * doorCenterDist;
+        float maxStartDist = Math.max(0f, wallLength - doorWidth);
+        float doorStartDist = MathUtils.clamp(hingePosition, 0f, wallLength);
+        if ("reverse".equalsIgnoreCase(orientation) || "end".equalsIgnoreCase(orientation)) {
+            doorStartDist -= doorWidth;
+        }
+        doorStartDist = MathUtils.clamp(doorStartDist, 0f, maxStartDist);
+        float doorEndDist = doorStartDist + doorWidth;
 
-        // Calculate door half-width vectors
-        float halfDoorWidth = doorWidth / 2f;
-        float doorStartX = doorCenterX - dirX * halfDoorWidth;
-        float doorStartZ = doorCenterZ - dirZ * halfDoorWidth;
-        float doorEndX = doorCenterX + dirX * halfDoorWidth;
-        float doorEndZ = doorCenterZ + dirZ * halfDoorWidth;
+        float doorStartX = x1 + dirX * doorStartDist;
+        float doorStartZ = z1 + dirZ * doorStartDist;
+        float doorEndX = x1 + dirX * doorEndDist;
+        float doorEndZ = z1 + dirZ * doorEndDist;
 
         // Left segment (from x1,z1 to door start)
         createWallSegment(x1, z1, doorStartX, doorStartZ, wallHeight, thickness);
@@ -179,7 +178,7 @@ public class TestMapBuilder {
                 headerY, headerHeight, thickness);
         }
 
-        // Register door with hinge at left side (doorStart)
+        // Register door with hinge at the door start point along the wall.
         String doorId = doorJson.getString("id", "door_" + doors.size());
         Vector3 hingePos = new Vector3(doorStartX, doorHeight / 2f, doorStartZ);
         doors.add(new DoorDefinition(hingePos, doorWidth, doorHeight, locked, doorId));
@@ -390,21 +389,8 @@ public class TestMapBuilder {
     }
 
     /**
-     * Creates DoorControllers from parsed door definitions.
-     */
-    public List<DoorController> createDoors() {
-        List<DoorController> controllers = new ArrayList<>();
-        for (DoorDefinition def : doors) {
-            DoorController controller = new DoorController(def.id, def.hingePosition, def.width);
-            controller.setLockState(def.locked ? DoorLockState.LOCKED : DoorLockState.UNLOCKED);
-            controllers.add(controller);
-        }
-        return controllers;
-    }
-
-    /**
      * Spawn parsed doors directly into the provided scene using the scene's
-     * `spawnLayoutDoor` helper so meshes and interactables are registered
+     * `spawnMapDoor` helper so meshes and interactables are registered
      * consistently.
      */
     public void spawnDoorsIntoScene(UniversalTestScene scene) {
@@ -412,7 +398,7 @@ public class TestMapBuilder {
         for (DoorDefinition def : doors) {
             String id = def.id != null ? def.id : "json-door-" + (idx++);
             // use hinge position (y is stored in hingePosition.y already)
-            scene.spawnLayoutDoor(id, def.hingePosition.x, def.hingePosition.y, def.hingePosition.z, def.locked);
+            scene.spawnMapDoor(id, def.hingePosition.x, def.hingePosition.y, def.hingePosition.z, def.locked);
         }
     }
 

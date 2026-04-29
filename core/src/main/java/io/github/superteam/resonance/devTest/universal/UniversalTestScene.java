@@ -44,8 +44,6 @@ import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.TimeUtils;
 import io.github.superteam.resonance.director.DirectorController;
 import io.github.superteam.resonance.devTest.universal.diagnostics.DiagnosticOverlay;
-import io.github.superteam.resonance.devTest.universal.zones.BlindChamberZone;
-import io.github.superteam.resonance.devTest.universal.zones.CrouchAlcoveZone;
 import io.github.superteam.resonance.devTest.universal.zones.ItemInteractionZone;
 import io.github.superteam.resonance.devTest.universal.zones.ParticleArenaZone;
 import io.github.superteam.resonance.devTest.universal.zones.RampStairsZone;
@@ -88,9 +86,6 @@ import io.github.superteam.resonance.rendering.BodyCamVHSAnimator;
 import io.github.superteam.resonance.rendering.BodyCamVHSSettings;
 import io.github.superteam.resonance.rendering.BodyCamVHSShaderLoader;
 import io.github.superteam.resonance.rendering.BodyCamVHSVisualizer;
-import io.github.superteam.resonance.rendering.blind.BlindEffectConfigStore;
-import io.github.superteam.resonance.rendering.blind.BlindEffectController;
-import io.github.superteam.resonance.rendering.blind.BlindEffectRevealConfig;
 import io.github.superteam.resonance.rendering.blind.BlindFogUniformUpdater;
 import io.github.superteam.resonance.sanity.SanitySystem;
 import io.github.superteam.resonance.sanity.drains.DarknessPresenceDrain;
@@ -110,7 +105,6 @@ import io.github.superteam.resonance.sound.viz.SoundPulseShaderRenderer;
 import io.github.superteam.resonance.sound.DijkstraPathfinder;
 import io.github.superteam.resonance.sound.GraphPopulator;
 import io.github.superteam.resonance.sound.PhysicsNoiseEmitter;
-import io.github.superteam.resonance.sound.PropagationResult;
 import io.github.superteam.resonance.sound.RealtimeMicSystem;
 import io.github.superteam.resonance.sound.SonarRenderer;
 import io.github.superteam.resonance.sound.SoundBalancingConfigStore;
@@ -135,7 +129,6 @@ import io.github.superteam.resonance.settings.SettingsSystem;
 import io.github.superteam.resonance.behavior.BehaviorSystem;
 import io.github.superteam.resonance.behavior.debug.BehaviorDebugOverlay;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
 /**
@@ -146,7 +139,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     private static final float HUB_X = 40.0f;
     private static final float HUB_Z = 40.0f;
     private static final float ZONE_RING_OFFSET = 20.0f;
-    private static final float BLIND_ZONE_OFFSET = 36.0f;
     private static final float DOOR_TEST_Z = HUB_Z + 10.0f;
     private static final float DOOR_TEST_SPAN = 1.6f;
     private static final float DOOR_INTERACT_RANGE = 2.8f;
@@ -201,13 +193,9 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private static final float CROSSHAIR_HALF_SIZE = 7.0f;
     private static final float CROSSHAIR_GAP = 3.0f;
-    private static final float NODE_FLASH_DURATION = 0.55f;
-    private static final float GRAPH_NODE_MARKER_RADIUS = 0.16f;
-    private static final float GRAPH_NODE_FLASH_RADIUS = 0.28f;
 
     private static final float MIC_THRESHOLD_RMS = 0.08f;
     private static final float ITEM_SPAWN_Y_OFFSET = 0.02f;
-    private static final float CROUCH_TUNNEL_CEILING = 1.4f; // v2 fix from master plan
     private static final int MIC_HISTORY_SIZE = 128;
     private static final float NODE_GRID_CELL_SIZE = 4.0f;
 
@@ -232,8 +220,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final ObjectMap<String, Vector3> graphNodePositions = new ObjectMap<>();
     private final ObjectMap<Long, Array<NodeReference>> graphNodeSpatialBuckets = new ObjectMap<>();
     private final Array<NodeReference> graphNodeReferences = new Array<>();
-    private final ObjectMap<String, Float> sonarRevealAlphaByNodeId = new ObjectMap<>();
-    private final Array<String> lastRevealedNodeIds = new Array<>();
 
     private final Array<ConsumablePickup> worldConsumablePickups = new Array<>();
     private final Array<CarriableItem> worldCarriableItems = new Array<>();
@@ -269,7 +255,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final Vector3 tmpImpulsePoint = new Vector3();
     private final Vector3 tmpImpactVelocity = new Vector3();
     private final Vector3 tmpInertia = new Vector3();
-    private final Vector3 tmpProjected = new Vector3();
     private final Vector3 tmpBaseCameraUp = new Vector3();
     private final Vector3 tmpRayDirection = new Vector3();
     private final Vector3 tmpRayEnd = new Vector3();
@@ -285,8 +270,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     private BodyCamPassFrameBuffer bodyCamFrameBuffer;
     private BodyCamVHSVisualizer bodyCamVisualizer;
     private BodyCamVHSSettings bodyCamSettings;
-    private BlindEffectRevealConfig blindEffectConfig;
-    private BlindEffectController blindEffectController;
     private final ParticleManager particleManager = new ParticleManager();
     private SoundPulseShaderRenderer soundPulseShaderRenderer;
     private AcousticBounceConfig acousticBounceConfig;
@@ -314,7 +297,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private ClosestRayResultCallback runtimeDoorKnobRayCallback;
     private io.github.superteam.resonance.particles.ParticleEffect mistEffect;
     private DoorController runtimeDoorController;
-    private final Array<DoorController> layoutDoorControllers = new Array<>();
+    private final Array<DoorController> mapDoorControllers = new Array<>();
     private final DoorBargeDetector doorBargeDetector = new DoorBargeDetector();
     private InteractableRegistry interactableRegistry;
     private RaycastInteractionSystem raycastInteractionSystem;
@@ -322,7 +305,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final InteractionPromptRenderer interactionPromptRenderer = new InteractionPromptRenderer();
     private final BehaviorDebugOverlay behaviorDebugOverlay = new BehaviorDebugOverlay();
     private String interactionPrompt = "";
-    private boolean runtimeDoorKnobVisible;
     // Testbed systems (Group A-D)
     private DialogueSystem dialogueSystem;
     private SaveSystem saveSystem;
@@ -356,7 +338,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     private float elapsedSeconds;
     private float runtimeSubtitleRemaining;
     private float currentFov = BASE_FOV;
-    private float revealedFlashRemaining;
     private float lastSoundIntensity;
     private float inventoryFullMessageRemaining;
     private float itemDestroyedMessageRemaining;
@@ -371,7 +352,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     private int micHistoryCursor;
     private int pendingScrollSteps;
     private boolean showGraphDebug;
-    private boolean showBlindRadiusDebug;
     private boolean micEnabled;
     private boolean breathingApplied;
     private String lastItemDestroyedMessage;
@@ -414,8 +394,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         bodyCamFrameBuffer = new BodyCamPassFrameBuffer();
         bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
         captureBaseBodyCamSettings();
-        blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
-        blindEffectController = new BlindEffectController(blindEffectConfig, panicModel);
         fullscreenQuadMesh = createFullscreenQuadMesh();
         bodyCamVisualizer = new BodyCamVHSVisualizer(
                 bodyCamFrameBuffer,
@@ -621,8 +599,9 @@ public final class UniversalTestScene extends ScreenAdapter {
             @Override public String name() { return "reload"; }
             @Override public String help() { return "reload - reload map and config files"; }
             @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                reloadMapScene();
                 if (ctx != null) {
-                    ctx.showSubtitle("Reload not yet implemented for testbed", 2.0f);
+                    ctx.showSubtitle("Reloading test map", 1.5f);
                 }
             }
         });
@@ -678,12 +657,8 @@ public final class UniversalTestScene extends ScreenAdapter {
             lastSoundIntensity = Math.max(lastSoundIntensity, soundEventData.baseIntensity());
             directorController.onSoundEvent(soundEventData, propagationResult);
             lightManager.onSoundEvent(soundEventData);
-            blindEffectController.onSoundEvent(soundEventData);
             acousticBounce3DVisualizer.onSoundEvent(soundEventData, propagationResult);
             sanityEventDrain.queueDelta(-0.65f * soundEventData.baseIntensity());
-            if (propagationResult != null) {
-                cacheRevealedNodesForFlash(propagationResult);
-            }
         });
         soundPropagationOrchestrator.registerEnemyListener(directorController);
 
@@ -777,8 +752,6 @@ public final class UniversalTestScene extends ScreenAdapter {
             new com.badlogic.gdx.graphics.Color(0.70f, 0.88f, 1.0f, 1f), 16f, 0.70f, true));
         lightManager.register(new GameLight("sound-zone", new Vector3(HUB_X, 2.1f, HUB_Z + ZONE_RING_OFFSET),
             new com.badlogic.gdx.graphics.Color(0.66f, 0.75f, 1.0f, 1f), 14f, 0.65f, true));
-        lightManager.register(new GameLight("blind-zone", new Vector3(HUB_X, 2.0f, HUB_Z + BLIND_ZONE_OFFSET),
-            new com.badlogic.gdx.graphics.Color(0.80f, 0.76f, 0.68f, 1f), 12f, 0.55f, false));
         lightManager.register(new GameLight("door-lane", new Vector3(HUB_X, 2.0f, DOOR_TEST_Z),
             new com.badlogic.gdx.graphics.Color(0.72f, 0.82f, 0.95f, 1f), 11f, 0.60f, true));
     }
@@ -875,12 +848,10 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private void initializeZones() {
         zones.add(new RampStairsZone(new Vector3(HUB_X + ZONE_RING_OFFSET, 0.0f, HUB_Z)));
-        zones.add(new CrouchAlcoveZone(new Vector3(HUB_X, 0.0f, HUB_Z - ZONE_RING_OFFSET)));
         zones.add(new SoundPropagationZone(new Vector3(HUB_X, 0.0f, HUB_Z + ZONE_RING_OFFSET)));
         zones.add(new ParticleArenaZone(new Vector3(HUB_X + ZONE_RING_OFFSET, 0.0f, HUB_Z + ZONE_RING_OFFSET)));
         zones.add(new ItemInteractionZone(new Vector3(HUB_X - ZONE_RING_OFFSET, 0.0f, HUB_Z + ZONE_RING_OFFSET)));
         zones.add(new ShaderCorridorZone(new Vector3(HUB_X - ZONE_RING_OFFSET, 0.0f, HUB_Z)));
-        zones.add(new BlindChamberZone(new Vector3(HUB_X, 0.0f, HUB_Z + BLIND_ZONE_OFFSET)));
 
         for (TestZone zone : zones) {
             zone.setUp();
@@ -1422,7 +1393,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         // Interact key defaults to F — do not override
         doorGrabInteraction = new DoorGrabInteraction();
 
-        layoutDoorControllers.clear();
+        mapDoorControllers.clear();
         if (testMapBuilder != null) {
             testMapBuilder.spawnDoorsIntoScene(this);
         }
@@ -1446,7 +1417,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         );
 
         // Raycast interaction update
-        runtimeDoorKnobVisible = isRuntimeDoorKnobTargeted();
         if (raycastInteractionSystem != null) {
             InteractionResult interactionResult = raycastInteractionSystem.update(
                 camera.position,
@@ -1461,9 +1431,13 @@ public final class UniversalTestScene extends ScreenAdapter {
             DoorController focusedDoor = interactionResult != null && interactionResult.hasTarget() && interactionResult.target() instanceof DoorController door
                 ? door
                 : null;
+            boolean runtimeDoorBodyTargeted = runtimeDoorController != null && isFacingRuntimeDoor();
+            if ((interactionPrompt == null || interactionPrompt.isBlank()) && runtimeDoorBodyTargeted) {
+                interactionPrompt = "[F] Interact door";
+            }
             DoorController grabTarget = focusedDoor != null
                 ? focusedDoor
-                : (grabbedDoor != null ? grabbedDoor : (runtimeDoorKnobVisible ? runtimeDoorController : null));
+                : (grabbedDoor != null ? grabbedDoor : (runtimeDoorBodyTargeted ? runtimeDoorController : null));
 
             if (doorGrabInteraction != null && grabTarget != null) {
                 doorGrabInteraction.update(
@@ -1480,8 +1454,8 @@ public final class UniversalTestScene extends ScreenAdapter {
         syncRuntimeDoorKnobCollider();
         refreshRuntimeDoorTransform();
 
-        if (!layoutDoorControllers.isEmpty()) {
-            for (DoorController door : layoutDoorControllers) {
+        if (!mapDoorControllers.isEmpty()) {
+            for (DoorController door : mapDoorControllers) {
                 door.update(deltaSeconds, interactionContext);
                 if (doorBargeDetector.check(playerController, door, interactionContext)) {
                     // bargeOpen already emitted the slam audio; keep the controller hot for the enemy/sound systems below
@@ -1573,7 +1547,7 @@ public final class UniversalTestScene extends ScreenAdapter {
      * Spawn a simple door at the given hinge world position. This mirrors the
      * JSON-built maps can create interactive doors.
      */
-    public void spawnLayoutDoor(String id, float hingeX, float hingeY, float hingeZ, boolean locked) {
+    public void spawnMapDoor(String id, float hingeX, float hingeY, float hingeZ, boolean locked) {
         Vector3 hinge = new Vector3(hingeX, hingeY, hingeZ);
         DoorController dc = new DoorController(id, hinge, 2.2f);
         dc.setLockState(locked ? DoorLockState.LOCKED : DoorLockState.UNLOCKED);
@@ -1582,7 +1556,7 @@ public final class UniversalTestScene extends ScreenAdapter {
             raycastInteractionSystem = new RaycastInteractionSystem(interactableRegistry);
         }
         interactableRegistry.register(dc);
-        layoutDoorControllers.add(dc);
+        mapDoorControllers.add(dc);
         Mesh doorMesh = createCubeMesh(2.0f, 2.1f, 0.12f);
         sceneMeshes.add(doorMesh);
         sceneTransforms.add(new Matrix4().setToTranslation(hinge));
@@ -1698,7 +1672,6 @@ public final class UniversalTestScene extends ScreenAdapter {
     public void render(float delta) {
         float clampedDelta = Math.max(0.0f, delta);
         elapsedSeconds += clampedDelta;
-        revealedFlashRemaining = Math.max(0.0f, revealedFlashRemaining - clampedDelta);
         inventoryFullMessageRemaining = Math.max(0.0f, inventoryFullMessageRemaining - clampedDelta);
         itemDestroyedMessageRemaining = Math.max(0.0f, itemDestroyedMessageRemaining - clampedDelta);
 
@@ -1716,13 +1689,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         renderHudOverlays();
         restoreCameraAfterBreathing();
 
-        if (cachedSoundPropagationZone != null) {
-            float flashAlpha = revealedFlashRemaining > 0.0f
-                    ? MathUtils.clamp(revealedFlashRemaining / NODE_FLASH_DURATION, 0.0f, 1.0f)
-                    : 0.0f;
-            cachedSoundPropagationZone.setSoundData(lastRevealedNodeIds, flashAlpha, playerPos);
-        }
-
         if (activeZone != null) {
             activeZone.render(camera);
         }
@@ -1731,30 +1697,28 @@ public final class UniversalTestScene extends ScreenAdapter {
     private boolean handleRuntimeInput() {
         // DEBUG KEY MAP
         // F1  â€” Toggle graph debug markers
-        // F2  â€” Toggle blind radius debug overlay
         // F3  â€” Reload runtime configs
         // F4  â€” Toggle acoustic bounce rays
         // F5  â€” Toggle VHS shader
         // F6  â€” Toggle microphone input
-        // F7  â€” Trigger blind flare reveal
         // F8  â€” Cycle diagnostic overlay tab
         // F9  â€” Switch to multiplayer menu
         // F10 â€” Switch to UniversalTestScene
         // F11 â€” Switch to GltfMapTestScene
         // F12 â€” Fire debug event flag
-        if (Gdx.input.isKeyJustPressed(Input.Keys.F1)) {
-            showGraphDebug = !showGraphDebug;
+        if ((Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT) || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT))
+                && Gdx.input.isKeyJustPressed(Input.Keys.R)) {
+            reloadMapScene();
+            return true;
         }
 
-        if (Gdx.input.isKeyJustPressed(Input.Keys.F2)) {
-            showBlindRadiusDebug = !showBlindRadiusDebug;
+        if (Gdx.input.isKeyJustPressed(Input.Keys.F1)) {
+            showGraphDebug = !showGraphDebug;
         }
 
         if (Gdx.input.isKeyJustPressed(Input.Keys.F3)) {
             bodyCamSettings = BodyCamSettingsStore.loadOrDefault("config/body_cam_settings.json");
             captureBaseBodyCamSettings();
-            blindEffectConfig = BlindEffectConfigStore.loadOrDefault("config/blind_effect_config.json");
-            blindEffectController.reloadConfig(blindEffectConfig);
         }
 
         if (Gdx.input.isKeyJustPressed(Input.Keys.F4)) {
@@ -1773,9 +1737,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.F6)) {
             toggleMicInput();
-        }
-        if (Gdx.input.isKeyJustPressed(Input.Keys.F7)) {
-            blindEffectController.triggerFlareReveal();
         }
 
         if (Gdx.input.isKeyJustPressed(Input.Keys.GRAVE)) {
@@ -1836,6 +1797,7 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
         }
 
+
         if (Gdx.input.isKeyJustPressed(Input.Keys.L)) {
             if (flashlightController != null) {
                 flashlightController.setEnabled(!flashlightController.isEnabled());
@@ -1876,6 +1838,20 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         return false;
     }
+
+    private void reloadMapScene() {
+        if (!(Gdx.app.getApplicationListener() instanceof Game game)) {
+            return;
+        }
+
+        Screen previous = game.getScreen();
+        Screen next = launchConfig == null ? new UniversalTestScene() : new UniversalTestScene(launchConfig);
+        game.setScreen(next);
+        if (previous != null && previous != next) {
+            Gdx.app.postRunnable(previous::dispose);
+        }
+    }
+
     private void updateGameplaySystems(float deltaSeconds) {
         playerController.update(deltaSeconds);
         if (playerController.consumeJumpTriggered()) {
@@ -1903,7 +1879,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         playerFeatureExtractor.update(deltaSeconds, playerController);
         footstepSystem.update(deltaSeconds, elapsedSeconds);
         soundPropagationOrchestrator.update(deltaSeconds);
-        updateSonarRevealSnapshot();
         handleMicInput(deltaSeconds);
 
         String listenerNodeId = findNearestNodeId(playerPos);
@@ -1965,14 +1940,8 @@ public final class UniversalTestScene extends ScreenAdapter {
         JumpScare triggeredScare = jumpScareDirector.pollTriggeredScare();
         if (triggeredScare != null) {
             showRuntimeSubtitle("[Scare] " + triggeredScare.message(), 1.8f);
-            if (triggeredScare.type() == io.github.superteam.resonance.scare.ScareType.FLASH
-                    || triggeredScare.type() == io.github.superteam.resonance.scare.ScareType.ENVIRONMENT) {
-                blindEffectController.triggerFlareReveal();
-            }
             sanityEventDrain.queueDelta(-1.25f * triggeredScare.intensity());
         }
-
-        blindEffectController.update(deltaSeconds);
 
         if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE) {
             tryStartVoiceCapture();
@@ -1995,17 +1964,6 @@ public final class UniversalTestScene extends ScreenAdapter {
                 }
             }
         }
-    }
-
-    private boolean tryInteractRuntimeDoor() {
-        if (!isFacingRuntimeDoor() || runtimeDoorController == null) {
-            return false;
-        }
-
-        runtimeDoorController.onInteract(null);
-        emitSoundEventPulse(SoundEvent.DOOR_SLAM, 0.48f);
-        showRuntimeSubtitle("Door runtime test toggled.", 1.0f);
-        return true;
     }
 
     private boolean isFacingRuntimeDoor() {
@@ -2169,8 +2127,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 elapsedSeconds);
 
         fireSoundPulseVisual(pulsePos, eventData.baseIntensity());
-        PropagationResult result = soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
-        cacheRevealedNodesForFlash(result);
+        soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
     }
 
     private void emitSoundSourceEvent(SoundEvent eventType, float intensity) {
@@ -2198,13 +2155,9 @@ public final class UniversalTestScene extends ScreenAdapter {
             soundPulseShaderRenderer.render(camera, deltaSeconds);
         }
         if (showGraphDebug) {
-            renderAcousticGraphWorldMarkers();
             acousticBounce3DVisualizer.render(camera);
         }
         particleManager.render(particleShaderProgram, camera);
-        if (showBlindRadiusDebug) {
-            renderBlindRadiusDebug3d();
-        }
         renderPlayerViewModel();
         renderRemotePlayers(deltaSeconds);
 
@@ -2223,10 +2176,10 @@ public final class UniversalTestScene extends ScreenAdapter {
         worldShader.setUniformf("u_fogColor", 0.06f, 0.07f, 0.10f);
         blindFogUniformUpdater.updateBlindUniforms(
                 worldShader,
-                blindEffectController.fogStartMeters(),
-                blindEffectController.fogEndMeters(),
-                blindEffectController.fogStrength(),
-                blindEffectController.fogColor());
+            1000f,
+            1001f,
+            0f,
+            new com.badlogic.gdx.graphics.Color(0f, 0f, 0f, 1f));
         worldShader.setUniformf("u_time", elapsedSeconds);
         worldShader.setUniformf("u_scanlineStrength", 0.12f);
         worldShader.setUniformf("u_ditherLevels", 8.0f);
@@ -2308,10 +2261,10 @@ public final class UniversalTestScene extends ScreenAdapter {
         playerShaderProgram.setUniformf("u_rimStrength", 0.28f);
         blindFogUniformUpdater.updateBlindUniforms(
                 playerShaderProgram,
-                blindEffectController.fogStartMeters(),
-                blindEffectController.fogEndMeters(),
-                blindEffectController.fogStrength(),
-                blindEffectController.fogColor());
+            1000f,
+            1001f,
+            0f,
+            new com.badlogic.gdx.graphics.Color(0f, 0f, 0f, 1f));
         // INCON-06 / Fix L â€” use per-item-type mesh; fall back to unit cube for unknown
         // types.
         Mesh viewModelMesh = viewModelMeshes.getOrDefault(heldItem.definition().itemType(), playerViewModelMesh);
@@ -2334,40 +2287,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         shapeRenderer.end();
     }
 
-    private void renderBlindRadiusDebug3d() {
-        float radius = blindEffectController.visibilityMeters();
-        shapeRenderer.setProjectionMatrix(camera.combined);
-        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
-        shapeRenderer.setColor(0.98f, 0.84f, 0.3f, 0.95f);
-        int segments = 28;
-        float previousX = playerPos.x + radius;
-        float previousZ = playerPos.z;
-        float y = Math.max(0.05f, playerPos.y);
-        for (int i = 1; i <= segments; i++) {
-            float angle = (i * 360f) / segments;
-            float x = playerPos.x + MathUtils.cosDeg(angle) * radius;
-            float z = playerPos.z + MathUtils.sinDeg(angle) * radius;
-            shapeRenderer.line(previousX, y, previousZ, x, y, z);
-            previousX = x;
-            previousZ = z;
-        }
-        shapeRenderer.end();
-    }
-
-    private void drawCircleXZ(Vector3 center, float radius, int segments) {
-        int clampedSegments = Math.max(8, segments);
-        float previousX = center.x + radius;
-        float previousZ = center.z;
-        for (int i = 1; i <= clampedSegments; i++) {
-            float angle = (i * 360f) / clampedSegments;
-            float x = center.x + MathUtils.cosDeg(angle) * radius;
-            float z = center.z + MathUtils.sinDeg(angle) * radius;
-            shapeRenderer.line(previousX, center.y, previousZ, x, center.y, z);
-            previousX = x;
-            previousZ = z;
-        }
-    }
-
     private void renderPostProcessToBackBuffer() {
         bodyCamSettings.validate();
         bodyCamVisualizer.renderToBackBuffer(elapsedSeconds, bodyCamSettings);
@@ -2382,7 +2301,8 @@ public final class UniversalTestScene extends ScreenAdapter {
                 ? null
                 : findNearestFacingConsumable();
         boolean doorTargetVisible = !carrySystem.isHoldingItem()
-            && runtimeDoorKnobVisible;
+            && interactionPrompt != null
+            && !interactionPrompt.isBlank();
 
         shapeRenderer.setProjectionMatrix(hudProjection);
         renderCrosshair(doorTargetVisible || focusedCarriable != null || focusedConsumable != null);
@@ -2742,8 +2662,8 @@ public final class UniversalTestScene extends ScreenAdapter {
         String line1 = "[WASD] Move    [Mouse] Look    [F] Pick up item    [Tab] Stash to inventory";
         String line2 = "[1-4] Slots    [Q] Drop item   [E] Use item        [Right-click] Throw";
         String line3 = "[V] Sonar pulse (keyboard)     [F6] Toggle mic     [F1] Toggle graph debug";
-        String line4 = "[F2] Toggle blind radius debug [F4] Toggle bounce rays  [F5] Toggle VHS shader";
-        String line5 = "[F3] Reload configs [F7] Trigger flare [F8] Cycle debug tab [F9/F10] Switch screens";
+        String line4 = "[F4] Toggle bounce rays  [F5] Toggle VHS shader";
+        String line5 = "[F3] Reload configs [F8] Cycle debug tab [F9/F10] Switch screens";
         String line6 = "Door test: (" + (int) HUB_X + ", " + (int) DOOR_TEST_Z + ")  Crouch: ("
             + (int) HUB_X + ", " + (int) (HUB_Z - ZONE_RING_OFFSET) + ")  Sound: (" + (int) HUB_X + ", "
             + (int) (HUB_Z + ZONE_RING_OFFSET) + ")";
@@ -2832,53 +2752,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         eventTriggerRuntime.fireEvent(eventId, resolvedTrigger, playerPos, elapsedSeconds, soundPropagationOrchestrator);
     }
 
-    private void renderAcousticGraphWorldMarkers() {
-        if (!showGraphDebug) {
-            return;
-        }
-
-        float flashAlpha = revealedFlashRemaining > 0.0f
-                ? MathUtils.clamp(revealedFlashRemaining / NODE_FLASH_DURATION, 0.0f, 1.0f)
-                : 0.0f;
-
-        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
-        for (ObjectMap.Entry<String, Vector3> entry : graphNodePositions.entries()) {
-            tmpProjected.set(entry.value);
-            tmpProjected.y += 0.05f;
-
-            float sonarAlpha = sonarRevealAlphaByNodeId.get(entry.key, 0f);
-            float markerRadius = GRAPH_NODE_MARKER_RADIUS + (sonarAlpha * 0.12f);
-            float markerGreen = 0.72f + (sonarAlpha * 0.23f);
-            float markerBlue = 0.45f + (sonarAlpha * 0.35f);
-            float markerAlpha = Math.max(0.35f, 0.65f + (sonarAlpha * 0.35f));
-
-            shapeRenderer.setColor(0.2f, markerGreen, markerBlue, markerAlpha);
-            drawCircleXZ(tmpProjected, markerRadius, 12);
-
-            if (flashAlpha > 0.0f && lastRevealedNodeIds.contains(entry.key, false)) {
-                shapeRenderer.setColor(1.0f, 0.92f, 0.2f, flashAlpha);
-                drawCircleXZ(tmpProjected, GRAPH_NODE_FLASH_RADIUS, 16);
-            }
-        }
-        shapeRenderer.end();
-    }
-
-    private void updateSonarRevealSnapshot() {
-        sonarRevealAlphaByNodeId.clear();
-        if (soundPropagationOrchestrator == null) {
-            return;
-        }
-
-        List<SonarRenderer.SonarRevealView> reveals = soundPropagationOrchestrator.sonarSnapshot();
-        for (SonarRenderer.SonarRevealView revealView : reveals) {
-            float weightedAlpha = MathUtils.clamp(revealView.alpha() * revealView.intensity(), 0f, 1f);
-            Float previous = sonarRevealAlphaByNodeId.get(revealView.nodeId());
-            if (previous == null || weightedAlpha > previous) {
-                sonarRevealAlphaByNodeId.put(revealView.nodeId(), weightedAlpha);
-            }
-        }
-    }
-
     private void fireSoundPulseVisual(Vector3 worldPosition, float intensity) {
         if (soundPulseShaderRenderer == null || worldPosition == null) {
             return;
@@ -2916,8 +2789,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                     elapsedSeconds);
 
             fireSoundPulseVisual(pulsePos, eventData.baseIntensity());
-            PropagationResult result = soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
-            cacheRevealedNodesForFlash(result);
+            soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
         });
     }
 
@@ -3197,7 +3069,6 @@ public final class UniversalTestScene extends ScreenAdapter {
             emitItemEvent(SoundEvent.NOISE_DECOY, tmpDropPosition.set(camera.position).mulAdd(camera.direction, 4.0f),
                     0.70f);
         } else if (itemDefinition.itemType() == ItemType.FLARE) {
-            blindEffectController.triggerFlareReveal();
             emitItemEvent(SoundEvent.OBJECT_DROP_OR_BREAK, tmpDropPosition.set(camera.position), 0.30f);
         }
 
@@ -3269,14 +3140,11 @@ public final class UniversalTestScene extends ScreenAdapter {
                 continue;
             }
 
-            PropagationResult propagationResult = impactListener.onCarriableImpact(
+            impactListener.onCarriableImpact(
                     carriableItem,
                     impactPoint,
                     entry.value,
                     elapsedSeconds);
-            if (propagationResult != null) {
-                cacheRevealedNodesForFlash(propagationResult);
-            }
         }
     }
 
@@ -3515,19 +3383,6 @@ public final class UniversalTestScene extends ScreenAdapter {
         return (xBits << 42) | (yBits << 21) | zBits;
     }
 
-    private void cacheRevealedNodesForFlash(PropagationResult propagationResult) {
-        lastRevealedNodeIds.clear();
-        if (propagationResult == null || propagationResult.revealNodeIds().isEmpty()) {
-            revealedFlashRemaining = 0.0f;
-            return;
-        }
-
-        for (String nodeId : propagationResult.revealNodeIds()) {
-            lastRevealedNodeIds.add(nodeId);
-        }
-        revealedFlashRemaining = NODE_FLASH_DURATION;
-    }
-
     private void emitItemEvent(SoundEvent eventType, Vector3 worldPosition, float intensity) {
         String sourceNodeId = findNearestNodeId(worldPosition);
         SoundEventData eventData = new SoundEventData(
@@ -3537,8 +3392,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 intensity,
                 elapsedSeconds);
         fireSoundPulseVisual(worldPosition, intensity);
-        PropagationResult propagationResult = soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
-        cacheRevealedNodesForFlash(propagationResult);
+            soundPropagationOrchestrator.emitSoundEvent(eventData, elapsedSeconds);
 
         // Share with other players
         if (multiplayerManager.getRole() != MultiplayerManager.Role.OFFLINE) {
