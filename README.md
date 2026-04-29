@@ -20,7 +20,7 @@ PILLAR 2 - DIRECTOR AI ADAPTATION
   Dynamic pacing adjusts pressure and relief moments
   Fear intensity responds to player movement patterns
 
-PILLAR 3 - PROCEDURAL SURVIVAL LOOP
+PILLAR 3 - PROCEDURAL SURVIVAL LOOP (might change to hand built map instead of procedural map cause so so)
   3 procedurally generated levels — different layout every run
   Each level has unique handcrafted puzzle logic and goal items
   Items spawn randomly across generated rooms
