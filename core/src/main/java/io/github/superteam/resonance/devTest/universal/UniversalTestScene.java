@@ -224,7 +224,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final Array<TestZone> zones = new Array<>();
     private final Vector3 playerPos = new Vector3();
     private TestZone activeZone;
-    private TestMapLayout layoutInstance;
+    private TestMapBuilder testMapBuilder;
 
     private final Array<Mesh> sceneMeshes = new Array<>();
     private final Array<Matrix4> sceneTransforms = new Array<>();
@@ -640,8 +640,7 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         initializePhysicsWorld();
         // Wall/floor/ceiling physics bodies are registered via registerStaticWorldBodies()
-        // which reads worldColliders populated by buildBunkerWalls(). Do NOT call
-        // layoutInstance.buildPhysics() — that would add room-volume boxes that block the player.
+        // which reads worldColliders populated by the selected map builder or procedural room.
         registerRuntimeDoorKnobCollider();
         registerStaticWorldBodies();
 
@@ -692,19 +691,8 @@ public final class UniversalTestScene extends ScreenAdapter {
                 playerController,
                 soundPropagationOrchestrator,
                 this::findNearestNodeId);
-        // Resolve surface materials from TestMapLayout surface zones when available
-        footstepSystem.setSurfaceResolver(position -> {
-            if (layoutInstance == null) return SurfaceMaterial.CONCRETE;
-            for (TestMapLayout.SurfaceZone sz : layoutInstance.surfaceZones()) {
-                BoundingBox bb = sz.toBoundingBox();
-                bb.min.add(HUB_X, 0f, HUB_Z);
-                bb.max.add(HUB_X, 0f, HUB_Z);
-                if (bb.contains(position)) {
-                    return sz.material;
-                }
-            }
-            return SurfaceMaterial.CONCRETE;
-        });
+        // JSON test maps do not currently encode surface materials, so default to concrete.
+        footstepSystem.setSurfaceResolver(position -> SurfaceMaterial.CONCRETE);
 
         playerFeatureExtractor = new PlayerFeatureExtractor();
         playerFeatureExtractor.setLastKnownPosition(camera.position);
@@ -745,24 +733,6 @@ public final class UniversalTestScene extends ScreenAdapter {
                 return true;
             }
         });
-
-        // Register a zone-based sanity drain for the dark room defined in the layout
-        if (layoutInstance != null && layoutInstance.darkRoomVolume() != null) {
-            BoundingBox dark = new BoundingBox(layoutInstance.darkRoomVolume());
-            dark.min.add(HUB_X, 0f, HUB_Z);
-            dark.max.add(HUB_X, 0f, HUB_Z);
-            sanitySystem.addDrainSource(new io.github.superteam.resonance.sanity.SanityDrainSource() {
-                @Override
-                public float drainPerSecond(io.github.superteam.resonance.sanity.SanitySystem.Context context) {
-                    if (context == null) return 0f;
-                    if (dark.contains(context.playerPosition())) return 1.4f;
-                    return 0f;
-                }
-
-                @Override
-                public float immediateDelta(io.github.superteam.resonance.sanity.SanitySystem.Context context) { return 0f; }
-            });
-        }
 
         Gdx.input.setCursorCatched(true);
 
@@ -1124,11 +1094,24 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void buildProceduralHubScene() {
+        testMapBuilder = null;
+
+        // If a JSON map exists at `assets/maps/test_map.json`, prefer it.
+        com.badlogic.gdx.files.FileHandle fh = Gdx.files.internal("maps/test_map.json");
+        if (fh != null && fh.exists()) {
+            try {
+                testMapBuilder = new TestMapBuilder();
+                testMapBuilder.loadFromJson("maps/test_map.json");
+                testMapBuilder.addMeshesToScene(sceneMeshes, sceneTransforms);
+                worldColliders.addAll(testMapBuilder.getWorldColliders());
+                return;
+            } catch (Exception e) {
+                Gdx.app.error("UniversalTestScene", "Failed to load JSON map", e);
+            }
+        }
+
         // Thin world ground plane (catch-all below all rooms)
         addBox(HUB_X, -0.1f, HUB_Z, 96.0f, 0.1f, 96.0f, true);
-
-        // Build layout instance (zones, doors, surfaces)
-        layoutInstance = TestMapLayout.buildDefaultLayoutInstance();
 
         // Build all walled bunker geometry (walls, floors, ceilings, pillars)
         buildBunkerWalls();
@@ -1148,124 +1131,283 @@ public final class UniversalTestScene extends ScreenAdapter {
     private void buildBunkerWalls() {
 
         // ════════════════════════════════════════════════════════════════════════
-        // ROOM 1 — SPAWN ROOM
-        // Interior: X[36.5, 43.5], Z[37.0, 43.0], ceiling Y = 3.0
+        // CENTRAL HUB
+        // Interior: X[34.0, 46.0], Z[34.0, 46.0], ceiling Y = 3.5
         // ════════════════════════════════════════════════════════════════════════
 
         // Floor
-        addBox(40.0f, -0.1f, 40.0f,   7.0f, 0.10f,  6.0f,  true);
-        // Ceiling (0.3 m wider each side to seal wall tops)
-        addBox(40.0f,  3.05f, 40.0f,   7.6f, 0.10f,  6.6f,  true);
-
-        // West wall  (X = 36.5, outer face X = 36.2)
-        addBox(36.35f, 1.50f, 40.0f,   0.3f, 3.00f,  6.0f,  true);
-        // East wall  (X = 43.5, outer face X = 43.8)
-        addBox(43.65f, 1.50f, 40.0f,   0.3f, 3.00f,  6.0f,  true);
-        // South wall — solid, no opening  (Z = 37.0)
-        addBox(40.0f,  1.50f, 36.85f,  7.6f, 3.00f,  0.3f,  true);
-
-        // North wall — door opening 1.2 m wide centered at X = 40.0, 2.1 m tall
-        //   Gap occupies X[39.4, 40.6]
-        //   Left segment  X[36.5, 39.4]  width = 2.9  center X = 37.95
-        addBox(37.95f, 1.50f, 43.15f,  2.9f, 3.00f,  0.3f,  true);
-        //   Right segment X[40.6, 43.5]  width = 2.9  center X = 42.05
-        addBox(42.05f, 1.50f, 43.15f,  2.9f, 3.00f,  0.3f,  true);
-        //   Door header   above 2.1 m → top at 3.0 m → height = 0.9  center Y = 2.55
-        addBox(40.0f,  2.55f, 43.15f,  1.2f, 0.90f,  0.3f,  true);
-
-        // ════════════════════════════════════════════════════════════════════════
-        // CORRIDOR 1
-        // Interior: X[38.5, 41.5], Z[43.0, 51.0], ceiling Y = 2.8
-        // Connects Spawn (south) to Dark Room (north) — both ends are open passages.
-        // West wall has a 1.5 m door opening to Crouch Alcove centered at Z = 47.0
-        // ════════════════════════════════════════════════════════════════════════
-
-        // Floor
-        addBox(40.0f, -0.1f, 47.0f,   3.0f, 0.10f,  8.0f,  true);
+        addBox(40.0f, -0.1f, 40.0f,   12.0f, 0.10f,  12.0f,  true);
         // Ceiling
-        addBox(40.0f,  2.85f, 47.0f,   3.6f, 0.10f,  8.6f,  true);
+        addBox(40.0f,  3.55f, 40.0f,   12.6f, 0.10f,  12.6f,  true);
 
-        // East wall — solid
-        addBox(41.65f, 1.40f, 47.0f,   0.3f, 2.80f,  8.0f,  true);
-
-        // West wall — split for alcove door opening  (Z gap: [46.25, 47.75], width = 1.5 m)
-        //   South segment  Z[43.0, 46.25]  depth = 3.25  center Z = 44.625
-        addBox(38.35f, 1.40f, 44.625f, 0.3f, 2.80f,  3.25f, true);
-        //   North segment  Z[47.75, 51.0]  depth = 3.25  center Z = 49.375
-        addBox(38.35f, 1.40f, 49.375f, 0.3f, 2.80f,  3.25f, true);
-        //   Header above alcove door (door height = 1.55 m, corridor ceiling = 2.8 m)
-        //   Header height = 2.8 − 1.55 = 1.25 m,  center Y = 1.55 + 0.625 = 2.175
-        addBox(38.35f, 2.175f, 47.0f,  0.3f, 1.25f,  1.5f,  true);
-
-        // South end — no wall needed; shares space with Spawn north wall
-        // North end — no wall needed; open into Dark Room
+        // West wall with door to West Corridor
+        addBox(33.65f, 1.75f, 40.0f,   0.3f, 3.50f,  12.0f,  true);
+        // East wall with door to East Corridor
+        addBox(46.35f, 1.75f, 40.0f,   0.3f, 3.50f,  12.0f,  true);
+        // South wall with door to South Corridor
+        addBox(40.0f,  1.75f, 33.65f,  12.6f, 3.50f,  0.3f,  true);
+        // North wall with door to North Corridor
+        addBox(40.0f,  1.75f, 46.35f,  12.6f, 3.50f,  0.3f,  true);
 
         // ════════════════════════════════════════════════════════════════════════
-        // ROOM 2 — CROUCH ALCOVE
-        // Interior: X[32.5, 38.5], Z[45.5, 48.5], ceiling Y = 1.55
-        // Entry on the east face via the door matched to the corridor opening above.
+        // SPAWN AREA
+        // Interior: X[36.0, 44.0], Z[26.0, 34.0], ceiling Y = 3.0
         // ════════════════════════════════════════════════════════════════════════
 
         // Floor
-        addBox(35.5f, -0.1f, 47.0f,   6.0f, 0.10f,  3.0f,  true);
-        // Ceiling (tight — only 1.55 m headroom)
-        addBox(35.5f,  1.60f, 47.0f,   6.6f, 0.10f,  3.6f,  true);
+        addBox(40.0f, -0.1f, 30.0f,   8.0f, 0.10f,  8.0f,  true);
+        // Ceiling
+        addBox(40.0f,  3.05f, 30.0f,   8.6f, 0.10f,  8.6f,  true);
 
         // West wall
-        addBox(32.35f, 0.775f, 47.0f,  0.3f, 1.55f,  3.0f,  true);
-        // North wall
-        addBox(35.5f,  0.775f, 48.65f, 6.6f, 1.55f,  0.3f,  true);
-        // South wall
-        addBox(35.5f,  0.775f, 45.35f, 6.6f, 1.55f,  0.3f,  true);
-
-        // East wall — door opening 1.5 m wide centered at Z = 47.0
-        //   Gap Z[46.25, 47.75]
-        //   South segment  Z[45.5, 46.25]  depth = 0.75  center Z = 45.875
-        addBox(38.65f, 0.775f, 45.875f, 0.3f, 1.55f, 0.75f, true);
-        //   North segment  Z[47.75, 48.5]  depth = 0.75  center Z = 48.125
-        addBox(38.65f, 0.775f, 48.125f, 0.3f, 1.55f, 0.75f, true);
-        // No header: alcove ceiling IS 1.55 m — door fills the full height.
-
-        // Relay obstacle — required for acoustic graph connectivity.
-        // The alcove is 6 m wide (> EDGE_MAX_DISTANCE_METERS = 4.0 m), so without
-        // this box GraphPopulator cannot bridge west wall to east face in a single hop.
-        // Low enough to step over (0.6 m) but tall enough to generate nodes (> 0.5 m threshold).
-        addBox(35.5f, 0.30f, 47.0f,   1.0f, 0.60f, 0.8f,  true);  // storage crate relay
-
-        // ════════════════════════════════════════════════════════════════════════
-        // ROOM 3 — DARK ROOM
-        // Interior: X[35.5, 44.5], Z[51.0, 60.0], ceiling Y = 3.2
-        // South face has an open 3 m passage aligned with Corridor 1 (X[38.5, 41.5]).
-        // ════════════════════════════════════════════════════════════════════════
-
-        // Floor
-        addBox(40.0f, -0.1f, 55.5f,   9.0f, 0.10f,  9.0f,  true);
-        // Ceiling
-        addBox(40.0f,  3.25f, 55.5f,   9.6f, 0.10f,  9.6f,  true);
-
-        // West wall
-        addBox(35.35f, 1.60f, 55.5f,   0.3f, 3.20f,  9.0f,  true);
+        addBox(35.65f, 1.50f, 30.0f,   0.3f, 3.00f,  8.0f,  true);
         // East wall
-        addBox(44.65f, 1.60f, 55.5f,   0.3f, 3.20f,  9.0f,  true);
-        // North wall — solid
-        addBox(40.0f,  1.60f, 60.15f,  9.6f, 3.20f,  0.3f,  true);
+        addBox(44.35f, 1.50f, 30.0f,   0.3f, 3.00f,  8.0f,  true);
+        // South wall
+        addBox(40.0f,  1.50f, 25.65f,  8.6f, 3.00f,  0.3f,  true);
+        // North wall with door to Hub
+        addBox(37.95f, 1.50f, 34.15f,  2.9f, 3.00f,  0.3f,  true);
+        addBox(42.05f, 1.50f, 34.15f,  2.9f, 3.00f,  0.3f,  true);
+        addBox(40.0f,  2.55f, 34.15f,  1.2f, 0.90f,  0.3f,  true);
 
-        // South wall — 3 m passage opening aligned with corridor X[38.5, 41.5]
-        //   Left segment   X[35.5, 38.5]  width = 3.0  center X = 37.0
-        addBox(37.0f,  1.60f, 50.85f,  3.0f, 3.20f,  0.3f,  true);
-        //   Right segment  X[41.5, 44.5]  width = 3.0  center X = 43.0
-        addBox(43.0f,  1.60f, 50.85f,  3.0f, 3.20f,  0.3f,  true);
-        // No door, no header — corridor ceiling (2.8) is lower than dark room (3.2)
+        // ════════════════════════════════════════════════════════════════════════
+        // CORRIDOR NORTH
+        // Interior: X[38.0, 42.0], Z[44.0, 54.0], ceiling Y = 2.8
+        // ════════════════════════════════════════════════════════════════════════
 
-        // ─── Pillars inside Dark Room (occlusion + acoustics) ───────────────────
-        // Required to bridge the 9 m dark room width within 4 m acoustic hops:
-        //   west wall → pillar SW → pillar N → pillar SE → east wall (all ≤ 4 m)
-        // Pillar SW
-        addBox(37.5f, 1.60f, 53.5f,    0.6f, 3.20f,  0.6f,  true);
-        // Pillar SE
-        addBox(42.5f, 1.60f, 53.5f,    0.6f, 3.20f,  0.6f,  true);
-        // Pillar center-north
-        addBox(40.0f, 1.60f, 57.5f,    0.6f, 3.20f,  0.6f,  true);
+        // Floor
+        addBox(40.0f, -0.1f, 49.0f,   4.0f, 0.10f,  10.0f,  true);
+        // Ceiling
+        addBox(40.0f,  2.85f, 49.0f,   4.6f, 0.10f,  10.6f,  true);
+
+        // West wall with alcoves
+        addBox(38.35f, 1.40f, 47.0f,   0.3f, 2.80f,  6.0f,  true);
+        addBox(38.35f, 1.40f, 51.0f,   0.3f, 2.80f,  6.0f,  true);
+        // East wall
+        addBox(41.65f, 1.40f, 49.0f,   0.3f, 2.80f,  10.0f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // CORRIDOR EAST
+        // Interior: X[44.0, 54.0], Z[38.0, 42.0], ceiling Y = 2.8
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(49.0f, -0.1f, 40.0f,   10.0f, 0.10f,  4.0f,  true);
+        // Ceiling
+        addBox(49.0f,  2.85f, 40.0f,   10.6f, 0.10f,  4.6f,  true);
+
+        // North wall with alcoves
+        addBox(47.0f, 1.40f, 41.65f,   6.0f, 2.80f,  0.3f,  true);
+        addBox(51.0f, 1.40f, 41.65f,   6.0f, 2.80f,  0.3f,  true);
+        // South wall
+        addBox(49.0f, 1.40f, 38.35f,   10.0f, 2.80f,  0.3f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // CORRIDOR SOUTH
+        // Interior: X[38.0, 42.0], Z[26.0, 36.0], ceiling Y = 2.8
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(40.0f, -0.1f, 31.0f,   4.0f, 0.10f,  10.0f,  true);
+        // Ceiling
+        addBox(40.0f,  2.85f, 31.0f,   4.6f, 0.10f,  10.6f,  true);
+
+        // West wall with alcoves
+        addBox(38.35f, 1.40f, 29.0f,   0.3f, 2.80f,  6.0f,  true);
+        addBox(38.35f, 1.40f, 33.0f,   0.3f, 2.80f,  6.0f,  true);
+        // East wall
+        addBox(41.65f, 1.40f, 31.0f,   0.3f, 2.80f,  10.0f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // CORRIDOR WEST
+        // Interior: X[26.0, 36.0], Z[38.0, 42.0], ceiling Y = 2.8
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(31.0f, -0.1f, 40.0f,   10.0f, 0.10f,  4.0f,  true);
+        // Ceiling
+        addBox(31.0f,  2.85f, 40.0f,   10.6f, 0.10f,  4.6f,  true);
+
+        // North wall
+        addBox(31.0f, 1.40f, 41.65f,   10.0f, 2.80f,  0.3f,  true);
+        // South wall with alcoves
+        addBox(29.0f, 1.40f, 38.35f,   6.0f, 2.80f,  0.3f,  true);
+        addBox(33.0f, 1.40f, 38.35f,   6.0f, 2.80f,  0.3f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ROOM NORTH
+        // Interior: X[35.0, 45.0], Z[52.0, 62.0], ceiling Y = 3.2
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(40.0f, -0.1f, 57.0f,   10.0f, 0.10f,  10.0f,  true);
+        // Ceiling
+        addBox(40.0f,  3.25f, 57.0f,   10.6f, 0.10f,  10.6f,  true);
+
+        // West wall
+        addBox(34.65f, 1.60f, 57.0f,   0.3f, 3.20f,  10.0f,  true);
+        // East wall
+        addBox(45.35f, 1.60f, 57.0f,   0.3f, 3.20f,  10.0f,  true);
+        // North wall
+        addBox(40.0f,  1.60f, 62.15f,  10.6f, 3.20f,  0.3f,  true);
+        // South wall with door to corridor
+        addBox(37.95f, 1.60f, 51.85f,  2.9f, 3.20f,  0.3f,  true);
+        addBox(42.05f, 1.60f, 51.85f,  2.9f, 3.20f,  0.3f,  true);
+        addBox(40.0f,  2.65f, 51.85f,  1.2f, 0.90f,  0.3f,  true);
+
+        // Pillars for acoustic connectivity
+        addBox(37.5f, 1.60f, 55.0f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(42.5f, 1.60f, 55.0f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(40.0f, 1.60f, 59.0f,    0.6f, 3.20f,  0.6f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ROOM EAST
+        // Interior: X[52.0, 62.0], Z[35.0, 45.0], ceiling Y = 3.2
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(57.0f, -0.1f, 40.0f,   10.0f, 0.10f,  10.0f,  true);
+        // Ceiling
+        addBox(57.0f,  3.25f, 40.0f,   10.6f, 0.10f,  10.6f,  true);
+
+        // West wall with door to corridor
+        addBox(51.85f, 1.60f, 37.95f,  0.3f, 3.20f,  2.9f,  true);
+        addBox(51.85f, 1.60f, 42.05f,  0.3f, 3.20f,  2.9f,  true);
+        addBox(51.85f, 2.65f, 40.0f,   0.3f, 0.90f,  1.2f,  true);
+        // East wall
+        addBox(62.35f, 1.60f, 40.0f,   0.3f, 3.20f,  10.0f,  true);
+        // North wall
+        addBox(57.0f,  1.60f, 45.35f,  10.6f, 3.20f,  0.3f,  true);
+        // South wall
+        addBox(57.0f,  1.60f, 34.65f,  10.6f, 3.20f,  0.3f,  true);
+
+        // Pillars for acoustic connectivity
+        addBox(55.0f, 1.60f, 37.5f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(55.0f, 1.60f, 42.5f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(59.0f, 1.60f, 40.0f,    0.6f, 3.20f,  0.6f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ROOM SOUTH
+        // Interior: X[35.0, 45.0], Z[18.0, 28.0], ceiling Y = 3.2
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(40.0f, -0.1f, 23.0f,   10.0f, 0.10f,  10.0f,  true);
+        // Ceiling
+        addBox(40.0f,  3.25f, 23.0f,   10.6f, 0.10f,  10.6f,  true);
+
+        // West wall
+        addBox(34.65f, 1.60f, 23.0f,   0.3f, 3.20f,  10.0f,  true);
+        // East wall
+        addBox(45.35f, 1.60f, 23.0f,   0.3f, 3.20f,  10.0f,  true);
+        // North wall with door to corridor
+        addBox(37.95f, 1.60f, 28.15f,  2.9f, 3.20f,  0.3f,  true);
+        addBox(42.05f, 1.60f, 28.15f,  2.9f, 3.20f,  0.3f,  true);
+        addBox(40.0f,  2.65f, 28.15f,  1.2f, 0.90f,  0.3f,  true);
+        // South wall
+        addBox(40.0f,  1.60f, 17.85f,  10.6f, 3.20f,  0.3f,  true);
+
+        // Pillars for acoustic connectivity
+        addBox(37.5f, 1.60f, 21.0f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(42.5f, 1.60f, 21.0f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(40.0f, 1.60f, 25.0f,    0.6f, 3.20f,  0.6f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ROOM WEST
+        // Interior: X[18.0, 28.0], Z[35.0, 45.0], ceiling Y = 3.2
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(23.0f, -0.1f, 40.0f,   10.0f, 0.10f,  10.0f,  true);
+        // Ceiling
+        addBox(23.0f,  3.25f, 40.0f,   10.6f, 0.10f,  10.6f,  true);
+
+        // West wall
+        addBox(17.65f, 1.60f, 40.0f,   0.3f, 3.20f,  10.0f,  true);
+        // East wall with door to corridor
+        addBox(28.15f, 1.60f, 37.95f,  0.3f, 3.20f,  2.9f,  true);
+        addBox(28.15f, 1.60f, 42.05f,  0.3f, 3.20f,  2.9f,  true);
+        addBox(28.15f, 2.65f, 40.0f,   0.3f, 0.90f,  1.2f,  true);
+        // North wall
+        addBox(23.0f,  1.60f, 45.35f,  10.6f, 3.20f,  0.3f,  true);
+        // South wall
+        addBox(23.0f,  1.60f, 34.65f,  10.6f, 3.20f,  0.3f,  true);
+
+        // Pillars for acoustic connectivity
+        addBox(21.0f, 1.60f, 37.5f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(21.0f, 1.60f, 42.5f,    0.6f, 3.20f,  0.6f,  true);
+        addBox(25.0f, 1.60f, 40.0f,    0.6f, 3.20f,  0.6f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // LOOP CORRIDOR (connects all rooms in a ring)
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Loop North
+        addBox(40.0f, -0.1f, 63.5f,   10.0f, 0.10f,  3.0f,  true);
+        addBox(40.0f,  2.85f, 63.5f,   10.6f, 0.10f,  3.6f,  true);
+        addBox(34.65f, 1.40f, 63.5f,   0.3f, 2.80f,  3.0f,  true);
+        addBox(45.35f, 1.40f, 63.5f,   0.3f, 2.80f,  3.0f,  true);
+
+        // Loop East
+        addBox(65.5f, -0.1f, 40.0f,   3.0f, 0.10f,  10.0f,  true);
+        addBox(65.5f,  2.85f, 40.0f,   3.6f, 0.10f,  10.6f,  true);
+        addBox(65.5f, 1.40f, 34.65f,   3.0f, 2.80f,  0.3f,  true);
+        addBox(65.5f, 1.40f, 45.35f,   3.0f, 2.80f,  0.3f,  true);
+
+        // Loop South
+        addBox(40.0f, -0.1f, 16.5f,   10.0f, 0.10f,  3.0f,  true);
+        addBox(40.0f,  2.85f, 16.5f,   10.6f, 0.10f,  3.6f,  true);
+        addBox(34.65f, 1.40f, 16.5f,   0.3f, 2.80f,  3.0f,  true);
+        addBox(45.35f, 1.40f, 16.5f,   0.3f, 2.80f,  3.0f,  true);
+
+        // Loop West
+        addBox(14.5f, -0.1f, 40.0f,   3.0f, 0.10f,  10.0f,  true);
+        addBox(14.5f,  2.85f, 40.0f,   3.6f, 0.10f,  10.6f,  true);
+        addBox(14.5f, 1.40f, 34.65f,   3.0f, 2.80f,  0.3f,  true);
+        addBox(14.5f, 1.40f, 45.35f,   3.0f, 2.80f,  0.3f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ALCOVES (hiding spots with low ceilings)
+        // ════════════════════════════════════════════════════════════════════════
+
+        // North alcoves
+        addBox(42.0f, -0.1f, 50.0f,   3.0f, 0.10f,  2.0f,  true);
+        addBox(42.0f,  1.60f, 50.0f,   3.6f, 0.10f,  2.6f,  true);
+        addBox(43.65f, 0.775f, 50.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(40.35f, 0.775f, 50.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(42.0f,  0.775f, 51.15f,  3.6f, 1.55f,  0.3f,  true);
+
+        addBox(38.0f, -0.1f, 50.0f,   3.0f, 0.10f,  2.0f,  true);
+        addBox(38.0f,  1.60f, 50.0f,   3.6f, 0.10f,  2.6f,  true);
+        addBox(39.65f, 0.775f, 50.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(36.35f, 0.775f, 50.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(38.0f,  0.775f, 51.15f,  3.6f, 1.55f,  0.3f,  true);
+
+        // East alcoves
+        addBox(50.0f, -0.1f, 42.0f,   2.0f, 0.10f,  3.0f,  true);
+        addBox(50.0f,  1.60f, 42.0f,   2.6f, 0.10f,  3.6f,  true);
+        addBox(50.0f, 0.775f, 43.65f,  2.0f, 1.55f,  0.3f,  true);
+        addBox(50.0f, 0.775f, 40.35f,  2.0f, 1.55f,  0.3f,  true);
+        addBox(51.15f, 0.775f, 42.0f,   0.3f, 1.55f,  3.6f,  true);
+
+        addBox(50.0f, -0.1f, 38.0f,   2.0f, 0.10f,  3.0f,  true);
+        addBox(50.0f,  1.60f, 38.0f,   2.6f, 0.10f,  3.6f,  true);
+        addBox(50.0f, 0.775f, 39.65f,  2.0f, 1.55f,  0.3f,  true);
+        addBox(50.0f, 0.775f, 36.35f,  2.0f, 1.55f,  0.3f,  true);
+        addBox(51.15f, 0.775f, 38.0f,   0.3f, 1.55f,  3.6f,  true);
+
+        // South alcoves
+        addBox(42.0f, -0.1f, 30.0f,   3.0f, 0.10f,  2.0f,  true);
+        addBox(42.0f,  1.60f, 30.0f,   3.6f, 0.10f,  2.6f,  true);
+        addBox(43.65f, 0.775f, 30.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(40.35f, 0.775f, 30.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(42.0f,  0.775f, 28.85f,  3.6f, 1.55f,  0.3f,  true);
+
+        addBox(38.0f, -0.1f, 30.0f,   3.0f, 0.10f,  2.0f,  true);
+        addBox(38.0f,  1.60f, 30.0f,   3.6f, 0.10f,  2.6f,  true);
+        addBox(39.65f, 0.775f, 30.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(36.35f, 0.775f, 30.0f,  0.3f, 1.55f,  2.0f,  true);
+        addBox(38.0f,  0.775f, 28.85f,  3.6f, 1.55f,  0.3f,  true);
     }
 
     private void setupRuntimeDoorTest() {
@@ -1281,21 +1423,8 @@ public final class UniversalTestScene extends ScreenAdapter {
         doorGrabInteraction = new DoorGrabInteraction();
 
         layoutDoorControllers.clear();
-        // Spawn additional doors defined in the TestMapLayout
-        if (layoutInstance != null) {
-            for (TestMapLayout.DoorSpawn ds : layoutInstance.doorSpawns()) {
-                Vector3 hinge = ds.hingeWorldPosition(HUB_X, HUB_Z);
-                DoorController dc = new DoorController(ds.id, hinge, 2.2f);
-                dc.setLockState(ds.locked ? DoorLockState.LOCKED : DoorLockState.UNLOCKED);
-                // Creak speed and slam intensity are determined at runtime by the player's
-                // mouse velocity and sprint state — not by per-door multiplier fields.
-                interactableRegistry.register(dc);
-                layoutDoorControllers.add(dc);
-                // Add a simple visual mesh for spawned door
-                Mesh doorMesh = createCubeMesh(2.0f, 2.1f, 0.12f);
-                sceneMeshes.add(doorMesh);
-                sceneTransforms.add(new Matrix4().setToTranslation(hinge));
-            }
+        if (testMapBuilder != null) {
+            testMapBuilder.spawnDoorsIntoScene(this);
         }
     }
 
@@ -1430,7 +1559,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 .translate(DOOR_TEST_SPAN * 0.5f, 0f, 0f);
     }
 
-    private void addBox(float centerX, float centerY, float centerZ, float width, float height, float depth,
+    void addBox(float centerX, float centerY, float centerZ, float width, float height, float depth,
             boolean addCollider) {
         Mesh mesh = createCubeMesh(width, height, depth);
         sceneMeshes.add(mesh);
@@ -1438,6 +1567,35 @@ public final class UniversalTestScene extends ScreenAdapter {
         if (addCollider) {
             addCollider(centerX, centerY, centerZ, width, height, depth);
         }
+    }
+
+    /**
+     * Spawn a simple door at the given hinge world position. This mirrors the
+     * JSON-built maps can create interactive doors.
+     */
+    public void spawnLayoutDoor(String id, float hingeX, float hingeY, float hingeZ, boolean locked) {
+        Vector3 hinge = new Vector3(hingeX, hingeY, hingeZ);
+        DoorController dc = new DoorController(id, hinge, 2.2f);
+        dc.setLockState(locked ? DoorLockState.LOCKED : DoorLockState.UNLOCKED);
+        if (interactableRegistry == null) {
+            interactableRegistry = new InteractableRegistry();
+            raycastInteractionSystem = new RaycastInteractionSystem(interactableRegistry);
+        }
+        interactableRegistry.register(dc);
+        layoutDoorControllers.add(dc);
+        Mesh doorMesh = createCubeMesh(2.0f, 2.1f, 0.12f);
+        sceneMeshes.add(doorMesh);
+        sceneTransforms.add(new Matrix4().setToTranslation(hinge));
+    }
+
+    /**
+     * Integrate a parsed TestMapBuilder into this scene: copy meshes, colliders,
+     * and spawn any parsed doors.
+     */
+    public void integrateTestMapBuilder(TestMapBuilder builder) {
+        builder.addMeshesToScene(this.sceneMeshes, this.sceneTransforms);
+        this.worldColliders.addAll(builder.getWorldColliders());
+        builder.spawnDoorsIntoScene(this);
     }
 
     private void addCollider(float centerX, float centerY, float centerZ, float width, float height, float depth) {
