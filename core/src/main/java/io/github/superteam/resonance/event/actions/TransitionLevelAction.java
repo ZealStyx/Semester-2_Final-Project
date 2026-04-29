@@ -11,7 +11,9 @@ public final class TransitionLevelAction implements EventAction {
 
     @Override
     public void execute(EventContext ctx) {
-        if (ctx == null) return;
-        // Placeholder until RoomTransitionSystem is threaded through EventContext.
+        if (ctx == null || roomName == null || roomName.isBlank()) return;
+        if (ctx.roomTransitionSystem() != null) {
+            ctx.roomTransitionSystem().triggerRoomTransition(roomName);
+        }
     }
 }

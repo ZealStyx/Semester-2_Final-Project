@@ -34,10 +34,8 @@ public final class DoorGrabInteraction {
 
                 float screenNorm = mouseXDelta / Math.max(1f, Gdx.graphics.getWidth());
                 angularVelocity = MathUtils.clamp(screenNorm * DRAG_SENSITIVITY / Math.max(0.0001f, delta), -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY);
-                grabbedDoor.applyAngleDelta(angularVelocity * delta);
-
                 float normSpeed = Math.abs(angularVelocity) / MAX_ANGULAR_VELOCITY;
-                grabbedDoor.updateDrag(delta, normSpeed, ctx);
+                grabbedDoor.dragStep(delta, normSpeed, ctx);
             }
             case COASTING -> {
                 if (grabbedDoor == null) {
@@ -54,9 +52,8 @@ public final class DoorGrabInteraction {
                     return;
                 }
 
-                grabbedDoor.applyAngleDelta(angularVelocity * delta);
                 float normSpeed = Math.abs(angularVelocity) / MAX_ANGULAR_VELOCITY;
-                grabbedDoor.updateDrag(delta, normSpeed, ctx);
+                grabbedDoor.dragStep(delta, normSpeed, ctx);
             }
         }
     }

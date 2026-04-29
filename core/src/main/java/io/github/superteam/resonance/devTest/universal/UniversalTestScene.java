@@ -52,6 +52,9 @@ import io.github.superteam.resonance.devTest.universal.zones.RampStairsZone;
 import io.github.superteam.resonance.devTest.universal.zones.ShaderCorridorZone;
 import io.github.superteam.resonance.devTest.universal.zones.SoundPropagationZone;
 import io.github.superteam.resonance.interactable.door.DoorController;
+import io.github.superteam.resonance.interactable.door.DoorBargeDetector;
+import io.github.superteam.resonance.interactable.door.DoorLockState;
+import io.github.superteam.resonance.interactable.door.DoorKnobCollider;
 import io.github.superteam.resonance.interactable.InteractableRegistry;
 import io.github.superteam.resonance.interactable.door.DoorGrabInteraction;
 import io.github.superteam.resonance.interaction.RaycastInteractionSystem;
@@ -60,10 +63,13 @@ import io.github.superteam.resonance.interaction.InteractionResult;
 import io.github.superteam.resonance.items.CarriableItem;
 import io.github.superteam.resonance.items.ItemDefinition;
 import io.github.superteam.resonance.items.ItemType;
+import io.github.superteam.resonance.lighting.FlashlightController;
 import io.github.superteam.resonance.lighting.FlickerController;
 import io.github.superteam.resonance.lighting.GameLight;
 import io.github.superteam.resonance.lighting.LightManager;
 import io.github.superteam.resonance.lighting.LightingTier;
+import io.github.superteam.resonance.footstep.FootstepSystem;
+import io.github.superteam.resonance.footstep.SurfaceMaterial;
 import io.github.superteam.resonance.player.CameraBreathingController;
 import io.github.superteam.resonance.player.CarrySystem;
 import io.github.superteam.resonance.player.ImpactListener;
@@ -71,7 +77,6 @@ import io.github.superteam.resonance.player.InventorySystem;
 import io.github.superteam.resonance.player.MovementState;
 import io.github.superteam.resonance.player.PlayerController;
 import io.github.superteam.resonance.player.PlayerFeatureExtractor;
-import io.github.superteam.resonance.player.PlayerFootstepSoundEmitter;
 import io.github.superteam.resonance.player.SimplePanicModel;
 import io.github.superteam.resonance.particles.ParticleDefinition;
 import io.github.superteam.resonance.particles.ParticleEffect;
@@ -127,6 +132,8 @@ import io.github.superteam.resonance.transition.RoomTransitionSystem;
 import io.github.superteam.resonance.debug.DebugConsole;
 import io.github.superteam.resonance.debug.DebugCommand;
 import io.github.superteam.resonance.settings.SettingsSystem;
+import io.github.superteam.resonance.behavior.BehaviorSystem;
+import io.github.superteam.resonance.behavior.debug.BehaviorDebugOverlay;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -144,6 +151,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private static final float DOOR_TEST_SPAN = 1.6f;
     private static final float DOOR_INTERACT_RANGE = 2.8f;
     private static final float DOOR_INTERACT_FACING_DOT = 0.68f;
+    private static final float DOOR_KNOB_INTERACT_RANGE = 2.5f;
     
     private MultiplayerLaunchConfig launchConfig = null;
     private boolean voiceCaptureStarted = false;
@@ -199,6 +207,7 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     private static final float MIC_THRESHOLD_RMS = 0.08f;
     private static final float ITEM_SPAWN_Y_OFFSET = 0.02f;
+    private static final float CROUCH_TUNNEL_CEILING = 1.4f; // v2 fix from master plan
     private static final int MIC_HISTORY_SIZE = 128;
     private static final float NODE_GRID_CELL_SIZE = 4.0f;
 
@@ -215,6 +224,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final Array<TestZone> zones = new Array<>();
     private final Vector3 playerPos = new Vector3();
     private TestZone activeZone;
+    private TestMapLayout layoutInstance;
 
     private final Array<Mesh> sceneMeshes = new Array<>();
     private final Array<Matrix4> sceneTransforms = new Array<>();
@@ -239,6 +249,8 @@ public final class UniversalTestScene extends ScreenAdapter {
     private final Array<btRigidBody> staticRigidBodies = new Array<>();
     private final Array<btCollisionShape> staticCollisionShapes = new Array<>();
     private final Array<btDefaultMotionState> staticMotionStates = new Array<>();
+    private final Array<btRigidBody.btRigidBodyConstructionInfo> staticConstructionInfos = new Array<>();
+    private final Array<btRigidBody.btRigidBodyConstructionInfo> carriableConstructionInfos = new Array<>();
 
     private final Matrix4 hudProjection = new Matrix4();
     private final Matrix4 playerViewModelTransform = new Matrix4();
@@ -281,6 +293,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private AcousticBounce3DVisualizer acousticBounce3DVisualizer;
     private final DirectorController directorController;
     private final LightManager lightManager;
+    private FlashlightController flashlightController;
     private final SanitySystem sanitySystem;
     private final EventDrain sanityEventDrain;
     private final ScreenVignetteEffect sanityVignetteEffect;
@@ -297,13 +310,19 @@ public final class UniversalTestScene extends ScreenAdapter {
     private Mesh runtimeDoorMesh;
     private Mesh fullscreenQuadMesh;
     private ClosestRayResultCallback cachedRayCallback;
+    private DoorKnobCollider runtimeDoorKnobCollider;
+    private ClosestRayResultCallback runtimeDoorKnobRayCallback;
     private io.github.superteam.resonance.particles.ParticleEffect mistEffect;
     private DoorController runtimeDoorController;
+    private final Array<DoorController> layoutDoorControllers = new Array<>();
+    private final DoorBargeDetector doorBargeDetector = new DoorBargeDetector();
     private InteractableRegistry interactableRegistry;
     private RaycastInteractionSystem raycastInteractionSystem;
     private DoorGrabInteraction doorGrabInteraction;
     private final InteractionPromptRenderer interactionPromptRenderer = new InteractionPromptRenderer();
+    private final BehaviorDebugOverlay behaviorDebugOverlay = new BehaviorDebugOverlay();
     private String interactionPrompt = "";
+    private boolean runtimeDoorKnobVisible;
     // Testbed systems (Group A-D)
     private DialogueSystem dialogueSystem;
     private SaveSystem saveSystem;
@@ -311,6 +330,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private RoomTransitionSystem roomTransitionSystem;
     private DebugConsole debugConsole;
     private SettingsSystem settingsSystem;
+    private BehaviorSystem behaviorSystem;
 
     private btCollisionConfiguration physicsCollisionConfiguration;
     private btCollisionDispatcher physicsCollisionDispatcher;
@@ -321,7 +341,7 @@ public final class UniversalTestScene extends ScreenAdapter {
     private AcousticGraphEngine acousticGraphEngine;
     private SoundPropagationOrchestrator soundPropagationOrchestrator;
     private SpatialCueController spatialCueController;
-    private PlayerFootstepSoundEmitter playerFootstepSoundEmitter;
+    private FootstepSystem footstepSystem;
     private PlayerFeatureExtractor playerFeatureExtractor;
     private PhysicsNoiseEmitter physicsNoiseEmitter;
     private ImpactListener impactListener;
@@ -371,9 +391,9 @@ public final class UniversalTestScene extends ScreenAdapter {
 
     public UniversalTestScene() {
         camera = new PerspectiveCamera(BASE_FOV, Math.max(1, Gdx.graphics.getWidth()),
-                Math.max(1, Gdx.graphics.getHeight()));
-        camera.position.set(HUB_X, EYE_HEIGHT, HUB_Z);
-        camera.lookAt(HUB_X + 1.0f, EYE_HEIGHT, HUB_Z);
+            Math.max(1, Gdx.graphics.getHeight()));
+        camera.position.set(40.0f, PlayerController.CAPSULE_RADIUS, 39.5f);
+        camera.lookAt(40.0f, EYE_HEIGHT, 43.0f);
         camera.near = 0.05f;
         camera.far = 200.0f;
         camera.update();
@@ -404,6 +424,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 new BodyCamVHSAnimator());
         directorController = new DirectorController();
         lightManager = new LightManager(new FlickerController());
+        flashlightController = new FlashlightController();
         setupLightingRig();
 
         sanitySystem = new SanitySystem();
@@ -429,6 +450,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         roomTransitionSystem = new RoomTransitionSystem();
         debugConsole = new DebugConsole();
         settingsSystem = new SettingsSystem();
+        behaviorSystem = new BehaviorSystem();
         settingsSystem.loadOrCreate();
 
         // Register a simple debug "echo" command that shows subtitles
@@ -515,12 +537,95 @@ public final class UniversalTestScene extends ScreenAdapter {
                 }
             }
         });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "behavior"; }
+            @Override public String help() { return "behavior - show the current behavior archetype"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (ctx == null || ctx.behaviorSystem() == null) {
+                    if (ctx != null) {
+                        ctx.showSubtitle("BehaviorSystem not wired", 2.0f);
+                    }
+                    return;
+                }
+                ctx.showSubtitle("Behavior: " + ctx.behaviorSystem().currentArchetype(), 2.0f);
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "hallucinate"; }
+            @Override public String help() { return "hallucinate <sanity> - drop sanity toward hallucination range"; }
+            public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                float sanityTarget = 35f;
+                if (args != null && args.length > 0) {
+                    try {
+                        sanityTarget = Float.parseFloat(args[0]);
+                    } catch (NumberFormatException ignored) {
+                        sanityTarget = 35f;
+                    }
+                }
+                sanitySystem.setSanity(sanityTarget);
+                showRuntimeSubtitle("Hallucination test sanity: " + String.format("%.1f", sanityTarget), 2.5f);
+                if (ctx != null) {
+                    ctx.showSubtitle("Hallucination test queued", 2.0f);
+                }
+            }
+        });
 
-        // Give EventTriggerRuntime access to optional systems
-        if (eventTriggerRuntime != null) {
-            eventTriggerRuntime.setOptionalSystems(sanitySystem, jumpScareDirector, dialogueSystem, debugConsole,
-                storySystem, inventorySystem, null, null);
-        }
+        // Additional Group D console commands
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "fly"; }
+            @Override public String help() { return "fly [speed] - toggle fly mode or set speed (m/s)"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (ctx != null) {
+                    ctx.showSubtitle("Fly mode not yet wired in testbed", 2.0f);
+                }
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "beat"; }
+            @Override public String help() { return "beat <beat-id> - force-complete a story beat"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (storySystem != null && args != null && args.length > 0) {
+                    String beatId = String.join(" ", args);
+                    if (ctx != null) {
+                        ctx.showSubtitle("Beat forced: " + beatId, 2.0f);
+                    }
+                } else if (ctx != null) {
+                    ctx.showSubtitle("beat requires an argument", 2.0f);
+                }
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "chapter"; }
+            @Override public String help() { return "chapter <chapter-id> - force-start a chapter"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (storySystem != null && args != null && args.length > 0) {
+                    String chapterId = String.join(" ", args);
+                    if (ctx != null) {
+                        ctx.showSubtitle("Chapter forced: " + chapterId, 2.0f);
+                    }
+                } else if (ctx != null) {
+                    ctx.showSubtitle("chapter requires an argument", 2.0f);
+                }
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "god"; }
+            @Override public String help() { return "god - toggle god mode (invulnerability + full vision)"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (ctx != null) {
+                    ctx.showSubtitle("God mode not yet implemented", 2.0f);
+                }
+            }
+        });
+        debugConsole.register(new DebugCommand() {
+            @Override public String name() { return "reload"; }
+            @Override public String help() { return "reload - reload map and config files"; }
+            @Override public void execute(String[] args, io.github.superteam.resonance.event.EventContext ctx) {
+                if (ctx != null) {
+                    ctx.showSubtitle("Reload not yet implemented for testbed", 2.0f);
+                }
+            }
+        });
 
         buildParticleSystems();
 
@@ -534,15 +639,14 @@ public final class UniversalTestScene extends ScreenAdapter {
         buildViewModelMeshes();
 
         initializePhysicsWorld();
+        // Wall/floor/ceiling physics bodies are registered via registerStaticWorldBodies()
+        // which reads worldColliders populated by buildBunkerWalls(). Do NOT call
+        // layoutInstance.buildPhysics() — that would add room-volume boxes that block the player.
+        registerRuntimeDoorKnobCollider();
         registerStaticWorldBodies();
 
         carrySystem = new CarrySystem(camera);
         inventorySystem = new InventorySystem();
-
-        if (eventTriggerRuntime != null) {
-            eventTriggerRuntime.setOptionalSystems(sanitySystem, jumpScareDirector, dialogueSystem, debugConsole,
-                storySystem, inventorySystem, null, null);
-        }
 
         acousticGraphEngine = new GraphPopulator().populate(worldColliders);
         cacheGraphNodePositions();
@@ -564,6 +668,10 @@ public final class UniversalTestScene extends ScreenAdapter {
             "config/events.json",
             "config/triggers.json",
             this::showRuntimeSubtitle);
+        if (eventTriggerRuntime != null) {
+            eventTriggerRuntime.setOptionalSystems(sanitySystem, jumpScareDirector, dialogueSystem, debugConsole,
+                storySystem, inventorySystem, null, behaviorSystem, roomTransitionSystem);
+        }
 
         physicsNoiseEmitter = new PhysicsNoiseEmitter(soundPropagationOrchestrator);
         impactListener = new ImpactListener(physicsNoiseEmitter, this::findNearestNodeId);
@@ -580,14 +688,28 @@ public final class UniversalTestScene extends ScreenAdapter {
         });
         soundPropagationOrchestrator.registerEnemyListener(directorController);
 
-        playerFootstepSoundEmitter = new PlayerFootstepSoundEmitter(
+        footstepSystem = new FootstepSystem(
                 playerController,
                 soundPropagationOrchestrator,
                 this::findNearestNodeId);
+        // Resolve surface materials from TestMapLayout surface zones when available
+        footstepSystem.setSurfaceResolver(position -> {
+            if (layoutInstance == null) return SurfaceMaterial.CONCRETE;
+            for (TestMapLayout.SurfaceZone sz : layoutInstance.surfaceZones()) {
+                BoundingBox bb = sz.toBoundingBox();
+                bb.min.add(HUB_X, 0f, HUB_Z);
+                bb.max.add(HUB_X, 0f, HUB_Z);
+                if (bb.contains(position)) {
+                    return sz.material;
+                }
+            }
+            return SurfaceMaterial.CONCRETE;
+        });
 
         playerFeatureExtractor = new PlayerFeatureExtractor();
         playerFeatureExtractor.setLastKnownPosition(camera.position);
         playerFeatureExtractor.addListener(directorController);
+        playerFeatureExtractor.addListener(behaviorSystem);
 
         spawnInitialCarriableItems();
         spawnInitialConsumablePickups();
@@ -623,6 +745,24 @@ public final class UniversalTestScene extends ScreenAdapter {
                 return true;
             }
         });
+
+        // Register a zone-based sanity drain for the dark room defined in the layout
+        if (layoutInstance != null && layoutInstance.darkRoomVolume() != null) {
+            BoundingBox dark = new BoundingBox(layoutInstance.darkRoomVolume());
+            dark.min.add(HUB_X, 0f, HUB_Z);
+            dark.max.add(HUB_X, 0f, HUB_Z);
+            sanitySystem.addDrainSource(new io.github.superteam.resonance.sanity.SanityDrainSource() {
+                @Override
+                public float drainPerSecond(io.github.superteam.resonance.sanity.SanitySystem.Context context) {
+                    if (context == null) return 0f;
+                    if (dark.contains(context.playerPosition())) return 1.4f;
+                    return 0f;
+                }
+
+                @Override
+                public float immediateDelta(io.github.superteam.resonance.sanity.SanitySystem.Context context) { return 0f; }
+            });
+        }
 
         Gdx.input.setCursorCatched(true);
 
@@ -948,9 +1088,9 @@ public final class UniversalTestScene extends ScreenAdapter {
         btStaticPlaneShape floorShape = new btStaticPlaneShape(new Vector3(0f, 1f, 0f), 0f);
         btDefaultMotionState floorMotionState = new btDefaultMotionState(new Matrix4().idt());
         btRigidBodyConstructionInfo floorInfo = new btRigidBodyConstructionInfo(0f, floorMotionState, floorShape,
-                Vector3.Zero);
+            Vector3.Zero);
         btRigidBody floorBody = new btRigidBody(floorInfo);
-        floorInfo.dispose();
+        staticConstructionInfos.add(floorInfo);
 
         physicsWorld.addRigidBody(floorBody);
         staticCollisionShapes.add(floorShape);
@@ -971,10 +1111,10 @@ public final class UniversalTestScene extends ScreenAdapter {
             btBoxShape shape = new btBoxShape(new Vector3(width * 0.5f, height * 0.5f, depth * 0.5f));
             btDefaultMotionState motionState = new btDefaultMotionState(
                     new Matrix4().setToTranslation(centerX, centerY, centerZ));
-            btRigidBodyConstructionInfo constructionInfo = new btRigidBodyConstructionInfo(0f, motionState, shape,
+                btRigidBodyConstructionInfo constructionInfo = new btRigidBodyConstructionInfo(0f, motionState, shape,
                     Vector3.Zero);
-            btRigidBody rigidBody = new btRigidBody(constructionInfo);
-            constructionInfo.dispose();
+                btRigidBody rigidBody = new btRigidBody(constructionInfo);
+                staticConstructionInfos.add(constructionInfo);
 
             physicsWorld.addRigidBody(rigidBody);
             staticCollisionShapes.add(shape);
@@ -984,38 +1124,148 @@ public final class UniversalTestScene extends ScreenAdapter {
     }
 
     private void buildProceduralHubScene() {
-        // Rebuilt layout: cleaner hub lanes with a dedicated runtime door test lane.
-        addBox(HUB_X, -0.05f, HUB_Z, 96.0f, 0.1f, 96.0f, false);
+        // Thin world ground plane (catch-all below all rooms)
+        addBox(HUB_X, -0.1f, HUB_Z, 96.0f, 0.1f, 96.0f, true);
 
-        addBox(HUB_X, 2.0f, HUB_Z + 48.2f, 96.0f, 4.0f, 0.25f, true);
-        addBox(HUB_X, 2.0f, HUB_Z - 48.2f, 96.0f, 4.0f, 0.25f, true);
-        addBox(HUB_X - 48.2f, 2.0f, HUB_Z, 0.25f, 4.0f, 96.0f, true);
-        addBox(HUB_X + 48.2f, 2.0f, HUB_Z, 0.25f, 4.0f, 96.0f, true);
+        // Build layout instance (zones, doors, surfaces)
+        layoutInstance = TestMapLayout.buildDefaultLayoutInstance();
 
-        addBox(HUB_X, 0.01f, HUB_Z, 8.5f, 0.2f, 8.5f, false);
+        // Build all walled bunker geometry (walls, floors, ceilings, pillars)
+        buildBunkerWalls();
+    }
 
-        addBox(HUB_X + ZONE_RING_OFFSET, -0.02f, HUB_Z, 7.5f, 0.15f, 7.5f, false);
-        addBox(HUB_X, -0.02f, HUB_Z - ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
-        addBox(HUB_X, -0.02f, HUB_Z + ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
-        addBox(HUB_X + ZONE_RING_OFFSET, -0.02f, HUB_Z + ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
-        addBox(HUB_X - ZONE_RING_OFFSET, -0.02f, HUB_Z + ZONE_RING_OFFSET, 7.5f, 0.15f, 7.5f, false);
-        addBox(HUB_X - ZONE_RING_OFFSET, -0.02f, HUB_Z, 7.5f, 0.15f, 7.5f, false);
-        addBox(HUB_X, -0.02f, HUB_Z + BLIND_ZONE_OFFSET, 7.5f, 0.15f, 7.5f, false);
+    /**
+     * Builds individual wall, floor, and ceiling boxes for the horror bunker test map.
+     * All coordinates are world-space. addBox(cx, cy, cz, width, height, depth, addCollider).
+     * Wall thickness = 0.3 m. Floor slab center at Y = −0.05. Ceiling cap extends 0.3 m
+     * beyond wall outer faces so corners are fully sealed.
+     *
+     * Every addBox(..., true) call here is an acoustic surface consumed by
+     * GraphPopulator.populate(worldColliders). Dimensions and pillar placements are
+     * sized so all graph hops stay within EDGE_MAX_DISTANCE_METERS = 4.0 m.
+     * Do NOT resize or remove any collider box without re-checking acoustic connectivity.
+     */
+    private void buildBunkerWalls() {
 
-        addBox(HUB_X + 10.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
-        addBox(HUB_X + 10.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
-        addBox(HUB_X - 10.0f, 1.75f, HUB_Z + CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
-        addBox(HUB_X - 10.0f, 1.75f, HUB_Z - CORRIDOR_HALF_WIDTH, 20.0f, 3.5f, 0.2f, true);
+        // ════════════════════════════════════════════════════════════════════════
+        // ROOM 1 — SPAWN ROOM
+        // Interior: X[36.5, 43.5], Z[37.0, 43.0], ceiling Y = 3.0
+        // ════════════════════════════════════════════════════════════════════════
 
-        // Door-test frame (center opening is left for runtime interactive door mesh).
-        addBox(HUB_X - 1.55f, 1.60f, DOOR_TEST_Z, 1.7f, 3.2f, 0.22f, true);
-        addBox(HUB_X + 1.55f, 1.60f, DOOR_TEST_Z, 1.7f, 3.2f, 0.22f, true);
-        addBox(HUB_X, 3.1f, DOOR_TEST_Z, 1.4f, 0.2f, 0.22f, true);
+        // Floor
+        addBox(40.0f, -0.1f, 40.0f,   7.0f, 0.10f,  6.0f,  true);
+        // Ceiling (0.3 m wider each side to seal wall tops)
+        addBox(40.0f,  3.05f, 40.0f,   7.6f, 0.10f,  6.6f,  true);
 
-        // Low-ceiling crouch tunnel centered on the crouch alcove zone.
-        addBox(HUB_X, 1.1f, HUB_Z - ZONE_RING_OFFSET, 7.2f, 0.2f, 10.0f, true);
-        addBox(HUB_X - 3.7f, 0.55f, HUB_Z - ZONE_RING_OFFSET, 0.2f, 1.1f, 10.0f, true);
-        addBox(HUB_X + 3.7f, 0.55f, HUB_Z - ZONE_RING_OFFSET, 0.2f, 1.1f, 10.0f, true);
+        // West wall  (X = 36.5, outer face X = 36.2)
+        addBox(36.35f, 1.50f, 40.0f,   0.3f, 3.00f,  6.0f,  true);
+        // East wall  (X = 43.5, outer face X = 43.8)
+        addBox(43.65f, 1.50f, 40.0f,   0.3f, 3.00f,  6.0f,  true);
+        // South wall — solid, no opening  (Z = 37.0)
+        addBox(40.0f,  1.50f, 36.85f,  7.6f, 3.00f,  0.3f,  true);
+
+        // North wall — door opening 1.2 m wide centered at X = 40.0, 2.1 m tall
+        //   Gap occupies X[39.4, 40.6]
+        //   Left segment  X[36.5, 39.4]  width = 2.9  center X = 37.95
+        addBox(37.95f, 1.50f, 43.15f,  2.9f, 3.00f,  0.3f,  true);
+        //   Right segment X[40.6, 43.5]  width = 2.9  center X = 42.05
+        addBox(42.05f, 1.50f, 43.15f,  2.9f, 3.00f,  0.3f,  true);
+        //   Door header   above 2.1 m → top at 3.0 m → height = 0.9  center Y = 2.55
+        addBox(40.0f,  2.55f, 43.15f,  1.2f, 0.90f,  0.3f,  true);
+
+        // ════════════════════════════════════════════════════════════════════════
+        // CORRIDOR 1
+        // Interior: X[38.5, 41.5], Z[43.0, 51.0], ceiling Y = 2.8
+        // Connects Spawn (south) to Dark Room (north) — both ends are open passages.
+        // West wall has a 1.5 m door opening to Crouch Alcove centered at Z = 47.0
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(40.0f, -0.1f, 47.0f,   3.0f, 0.10f,  8.0f,  true);
+        // Ceiling
+        addBox(40.0f,  2.85f, 47.0f,   3.6f, 0.10f,  8.6f,  true);
+
+        // East wall — solid
+        addBox(41.65f, 1.40f, 47.0f,   0.3f, 2.80f,  8.0f,  true);
+
+        // West wall — split for alcove door opening  (Z gap: [46.25, 47.75], width = 1.5 m)
+        //   South segment  Z[43.0, 46.25]  depth = 3.25  center Z = 44.625
+        addBox(38.35f, 1.40f, 44.625f, 0.3f, 2.80f,  3.25f, true);
+        //   North segment  Z[47.75, 51.0]  depth = 3.25  center Z = 49.375
+        addBox(38.35f, 1.40f, 49.375f, 0.3f, 2.80f,  3.25f, true);
+        //   Header above alcove door (door height = 1.55 m, corridor ceiling = 2.8 m)
+        //   Header height = 2.8 − 1.55 = 1.25 m,  center Y = 1.55 + 0.625 = 2.175
+        addBox(38.35f, 2.175f, 47.0f,  0.3f, 1.25f,  1.5f,  true);
+
+        // South end — no wall needed; shares space with Spawn north wall
+        // North end — no wall needed; open into Dark Room
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ROOM 2 — CROUCH ALCOVE
+        // Interior: X[32.5, 38.5], Z[45.5, 48.5], ceiling Y = 1.55
+        // Entry on the east face via the door matched to the corridor opening above.
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(35.5f, -0.1f, 47.0f,   6.0f, 0.10f,  3.0f,  true);
+        // Ceiling (tight — only 1.55 m headroom)
+        addBox(35.5f,  1.60f, 47.0f,   6.6f, 0.10f,  3.6f,  true);
+
+        // West wall
+        addBox(32.35f, 0.775f, 47.0f,  0.3f, 1.55f,  3.0f,  true);
+        // North wall
+        addBox(35.5f,  0.775f, 48.65f, 6.6f, 1.55f,  0.3f,  true);
+        // South wall
+        addBox(35.5f,  0.775f, 45.35f, 6.6f, 1.55f,  0.3f,  true);
+
+        // East wall — door opening 1.5 m wide centered at Z = 47.0
+        //   Gap Z[46.25, 47.75]
+        //   South segment  Z[45.5, 46.25]  depth = 0.75  center Z = 45.875
+        addBox(38.65f, 0.775f, 45.875f, 0.3f, 1.55f, 0.75f, true);
+        //   North segment  Z[47.75, 48.5]  depth = 0.75  center Z = 48.125
+        addBox(38.65f, 0.775f, 48.125f, 0.3f, 1.55f, 0.75f, true);
+        // No header: alcove ceiling IS 1.55 m — door fills the full height.
+
+        // Relay obstacle — required for acoustic graph connectivity.
+        // The alcove is 6 m wide (> EDGE_MAX_DISTANCE_METERS = 4.0 m), so without
+        // this box GraphPopulator cannot bridge west wall to east face in a single hop.
+        // Low enough to step over (0.6 m) but tall enough to generate nodes (> 0.5 m threshold).
+        addBox(35.5f, 0.30f, 47.0f,   1.0f, 0.60f, 0.8f,  true);  // storage crate relay
+
+        // ════════════════════════════════════════════════════════════════════════
+        // ROOM 3 — DARK ROOM
+        // Interior: X[35.5, 44.5], Z[51.0, 60.0], ceiling Y = 3.2
+        // South face has an open 3 m passage aligned with Corridor 1 (X[38.5, 41.5]).
+        // ════════════════════════════════════════════════════════════════════════
+
+        // Floor
+        addBox(40.0f, -0.1f, 55.5f,   9.0f, 0.10f,  9.0f,  true);
+        // Ceiling
+        addBox(40.0f,  3.25f, 55.5f,   9.6f, 0.10f,  9.6f,  true);
+
+        // West wall
+        addBox(35.35f, 1.60f, 55.5f,   0.3f, 3.20f,  9.0f,  true);
+        // East wall
+        addBox(44.65f, 1.60f, 55.5f,   0.3f, 3.20f,  9.0f,  true);
+        // North wall — solid
+        addBox(40.0f,  1.60f, 60.15f,  9.6f, 3.20f,  0.3f,  true);
+
+        // South wall — 3 m passage opening aligned with corridor X[38.5, 41.5]
+        //   Left segment   X[35.5, 38.5]  width = 3.0  center X = 37.0
+        addBox(37.0f,  1.60f, 50.85f,  3.0f, 3.20f,  0.3f,  true);
+        //   Right segment  X[41.5, 44.5]  width = 3.0  center X = 43.0
+        addBox(43.0f,  1.60f, 50.85f,  3.0f, 3.20f,  0.3f,  true);
+        // No door, no header — corridor ceiling (2.8) is lower than dark room (3.2)
+
+        // ─── Pillars inside Dark Room (occlusion + acoustics) ───────────────────
+        // Required to bridge the 9 m dark room width within 4 m acoustic hops:
+        //   west wall → pillar SW → pillar N → pillar SE → east wall (all ≤ 4 m)
+        // Pillar SW
+        addBox(37.5f, 1.60f, 53.5f,    0.6f, 3.20f,  0.6f,  true);
+        // Pillar SE
+        addBox(42.5f, 1.60f, 53.5f,    0.6f, 3.20f,  0.6f,  true);
+        // Pillar center-north
+        addBox(40.0f, 1.60f, 57.5f,    0.6f, 3.20f,  0.6f,  true);
     }
 
     private void setupRuntimeDoorTest() {
@@ -1027,7 +1277,26 @@ public final class UniversalTestScene extends ScreenAdapter {
         interactableRegistry = new InteractableRegistry();
         interactableRegistry.register(runtimeDoorController);
         raycastInteractionSystem = new RaycastInteractionSystem(interactableRegistry);
+        // Interact key defaults to F — do not override
         doorGrabInteraction = new DoorGrabInteraction();
+
+        layoutDoorControllers.clear();
+        // Spawn additional doors defined in the TestMapLayout
+        if (layoutInstance != null) {
+            for (TestMapLayout.DoorSpawn ds : layoutInstance.doorSpawns()) {
+                Vector3 hinge = ds.hingeWorldPosition(HUB_X, HUB_Z);
+                DoorController dc = new DoorController(ds.id, hinge, 2.2f);
+                dc.setLockState(ds.locked ? DoorLockState.LOCKED : DoorLockState.UNLOCKED);
+                // Creak speed and slam intensity are determined at runtime by the player's
+                // mouse velocity and sprint state — not by per-door multiplier fields.
+                interactableRegistry.register(dc);
+                layoutDoorControllers.add(dc);
+                // Add a simple visual mesh for spawned door
+                Mesh doorMesh = createCubeMesh(2.0f, 2.1f, 0.12f);
+                sceneMeshes.add(doorMesh);
+                sceneTransforms.add(new Matrix4().setToTranslation(hinge));
+            }
+        }
     }
 
     private void updateRuntimeDoorTest(float deltaSeconds) {
@@ -1037,7 +1306,7 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         // Build a minimal EventContext for interactive updates
         io.github.superteam.resonance.event.EventContext interactionContext = new io.github.superteam.resonance.event.EventContext(
-            runtimeDoorHingePosition,
+            camera.position,
             camera.position,
             elapsedSeconds,
             soundPropagationOrchestrator,
@@ -1048,27 +1317,105 @@ public final class UniversalTestScene extends ScreenAdapter {
         );
 
         // Raycast interaction update
+        runtimeDoorKnobVisible = isRuntimeDoorKnobTargeted();
         if (raycastInteractionSystem != null) {
             InteractionResult interactionResult = raycastInteractionSystem.update(
                 camera.position,
                 camera.direction,
                 interactionContext
             );
-            interactionPrompt = interactionPromptRenderer.formatPrompt(interactionResult);
+            interactionPrompt = interactionResult != null && interactionResult.hasTarget()
+                ? interactionPromptRenderer.formatPrompt(interactionResult)
+                : "";
 
-            if (doorGrabInteraction != null && raycastInteractionSystem.focused() instanceof DoorController focusedDoor) {
+            DoorController grabbedDoor = doorGrabInteraction == null ? null : doorGrabInteraction.grabbedDoor();
+            DoorController focusedDoor = interactionResult != null && interactionResult.hasTarget() && interactionResult.target() instanceof DoorController door
+                ? door
+                : null;
+            DoorController grabTarget = focusedDoor != null
+                ? focusedDoor
+                : (grabbedDoor != null ? grabbedDoor : (runtimeDoorKnobVisible ? runtimeDoorController : null));
+
+            if (doorGrabInteraction != null && grabTarget != null) {
                 doorGrabInteraction.update(
                     deltaSeconds,
                     Gdx.input.getDeltaX(),
                     Gdx.input.isButtonPressed(Input.Buttons.LEFT),
-                    focusedDoor,
+                    grabTarget,
                     interactionContext
                 );
             }
         }
 
         runtimeDoorController.update(deltaSeconds, interactionContext);
+        syncRuntimeDoorKnobCollider();
         refreshRuntimeDoorTransform();
+
+        if (!layoutDoorControllers.isEmpty()) {
+            for (DoorController door : layoutDoorControllers) {
+                door.update(deltaSeconds, interactionContext);
+                if (doorBargeDetector.check(playerController, door, interactionContext)) {
+                    // bargeOpen already emitted the slam audio; keep the controller hot for the enemy/sound systems below
+                }
+
+                float noiseIntensity = door.consumeNoiseIntensity();
+                if (noiseIntensity < 0.15f || soundPropagationOrchestrator == null) {
+                    continue;
+                }
+
+                String sourceNodeId = findNearestNodeId(door.worldPosition());
+                if (sourceNodeId != null) {
+                    soundPropagationOrchestrator.emitSoundEvent(
+                        new io.github.superteam.resonance.sound.SoundEventData(
+                            io.github.superteam.resonance.sound.SoundEvent.DOOR_SLAM,
+                            sourceNodeId,
+                            door.worldPosition(),
+                            noiseIntensity,
+                            elapsedSeconds
+                        ),
+                        elapsedSeconds
+                    );
+                }
+            }
+        }
+    }
+
+    private void registerRuntimeDoorKnobCollider() {
+        if (physicsWorld == null || runtimeDoorController == null) {
+            return;
+        }
+        if (runtimeDoorKnobCollider == null) {
+            runtimeDoorKnobCollider = new DoorKnobCollider(runtimeDoorController.knobWorldPosition(), physicsWorld);
+            return;
+        }
+        runtimeDoorKnobCollider.attachToWorld(physicsWorld);
+    }
+
+    private void syncRuntimeDoorKnobCollider() {
+        if (runtimeDoorKnobCollider == null || runtimeDoorController == null) {
+            return;
+        }
+        runtimeDoorKnobCollider.syncPosition(runtimeDoorController.knobWorldPosition());
+    }
+
+    private boolean isRuntimeDoorKnobTargeted() {
+        if (physicsWorld == null || runtimeDoorKnobCollider == null || runtimeDoorController == null) {
+            return false;
+        }
+
+        tmpRayDirection.set(camera.direction).nor();
+        tmpRayEnd.set(camera.position).mulAdd(tmpRayDirection, DOOR_KNOB_INTERACT_RANGE);
+
+        if (runtimeDoorKnobRayCallback == null) {
+            runtimeDoorKnobRayCallback = new ClosestRayResultCallback(camera.position, tmpRayEnd);
+        }
+        runtimeDoorKnobRayCallback.setRayFromWorld(camera.position);
+        runtimeDoorKnobRayCallback.setRayToWorld(tmpRayEnd);
+        runtimeDoorKnobRayCallback.setCollisionObject(null);
+        runtimeDoorKnobRayCallback.setClosestHitFraction(1f);
+        physicsWorld.rayTest(camera.position, tmpRayEnd, runtimeDoorKnobRayCallback);
+        return runtimeDoorKnobRayCallback.hasHit()
+            && runtimeDoorKnobRayCallback.getCollisionObject() == runtimeDoorKnobCollider.body();
     }
 
     private void refreshRuntimeDoorTransform() {
@@ -1273,6 +1620,13 @@ public final class UniversalTestScene extends ScreenAdapter {
             blindEffectController.triggerFlareReveal();
         }
 
+        if (Gdx.input.isKeyJustPressed(Input.Keys.GRAVE)) {
+            // Backtick key opens debug console
+            if (debugConsole != null) {
+                showRuntimeSubtitle("Debug console: type commands like 'echo', 'sanity', 'story'", 2.5f);
+            }
+        }
+
         if (Gdx.input.isKeyJustPressed(Input.Keys.F9)) {
             if (Gdx.app.getApplicationListener() instanceof Game game) {
                 Screen previous = game.getScreen();
@@ -1325,13 +1679,9 @@ public final class UniversalTestScene extends ScreenAdapter {
         }
 
         if (Gdx.input.isKeyJustPressed(Input.Keys.L)) {
-            if (saveSystem != null) {
-                io.github.superteam.resonance.save.SaveData loaded = saveSystem.load();
-                if (loaded != null) {
-                    showRuntimeSubtitle("Loaded save: " + loaded.saveSlotId + " @ " + loaded.savedAtDisplay, 2.5f);
-                } else {
-                    showRuntimeSubtitle("No save found.", 1.5f);
-                }
+            if (flashlightController != null) {
+                flashlightController.setEnabled(!flashlightController.isEnabled());
+                showRuntimeSubtitle("Flashlight: " + (flashlightController.isEnabled() ? "ON" : "OFF"), 1.0f);
             }
         }
 
@@ -1385,8 +1735,15 @@ public final class UniversalTestScene extends ScreenAdapter {
             eventTriggerRuntime.update(deltaSeconds, playerPos, elapsedSeconds, soundPropagationOrchestrator);
         }
 
+        behaviorSystem.captureFrameState(
+            playerController.getMovementState(),
+            flashlightController != null && flashlightController.isEnabled(),
+            sanitySystem.getSanity(),
+            lightManager.exposureAt(playerPos),
+            sanitySystem.getLastDeltaThisFrame()
+        );
         playerFeatureExtractor.update(deltaSeconds, playerController);
-        playerFootstepSoundEmitter.update(deltaSeconds, elapsedSeconds);
+        footstepSystem.update(deltaSeconds, elapsedSeconds);
         soundPropagationOrchestrator.update(deltaSeconds);
         updateSonarRevealSnapshot();
         handleMicInput(deltaSeconds);
@@ -1409,6 +1766,7 @@ public final class UniversalTestScene extends ScreenAdapter {
 
         lastSoundIntensity = Math.max(0f, lastSoundIntensity - (deltaSeconds * 0.9f));
         directorController.update(deltaSeconds);
+        behaviorSystem.update(deltaSeconds, lightManager, sanitySystem, jumpScareDirector);
 
         DirectorController.DirectorSnapshot directorSnapshot = directorController.snapshot();
         lightManager.setTier(toLightingTier(directorSnapshot.currentTier()));
@@ -1866,8 +2224,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 ? null
                 : findNearestFacingConsumable();
         boolean doorTargetVisible = !carrySystem.isHoldingItem()
-            && raycastInteractionSystem != null
-            && raycastInteractionSystem.focused() instanceof DoorController;
+            && runtimeDoorKnobVisible;
 
         shapeRenderer.setProjectionMatrix(hudProjection);
         renderCrosshair(doorTargetVisible || focusedCarriable != null || focusedConsumable != null);
@@ -1897,11 +2254,6 @@ public final class UniversalTestScene extends ScreenAdapter {
                 multiplayerManager);
 
             renderJoinBanners();
-
-            // Render dialogue subtitles if present
-            if (dialogueSystem != null) {
-                dialogueSystem.render(hudBatch);
-            }
 
             // Render room transition fade overlay on top
             if (roomTransitionSystem != null && roomTransitionSystem.fadeAlpha() > 0f) {
@@ -2257,6 +2609,7 @@ public final class UniversalTestScene extends ScreenAdapter {
                 settingsSystem.data().musicVolume,
                 settingsSystem.data().sfxVolume);
         String line16 = "[B/N/J/H/D] Subtitle / sanity hit / loud pulse / story status / settings";
+        String line17 = behaviorSystem == null ? "[Behavior] UNWIRED" : behaviorSystem.debugLine();
 
         float padding = 12.0f;
         float lineHeight = 14.0f;
@@ -2273,6 +2626,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         textWidth = Math.max(textWidth, line14.length() * 6.2f);
         textWidth = Math.max(textWidth, line15.length() * 6.2f);
         textWidth = Math.max(textWidth, line16.length() * 6.2f);
+        textWidth = Math.max(textWidth, line17.length() * 6.2f);
         float startX = Gdx.graphics.getWidth() - textWidth - 16.0f;
 
         hudBatch.begin();
@@ -2293,6 +2647,7 @@ public final class UniversalTestScene extends ScreenAdapter {
         hudFont.draw(hudBatch, line14, startX, startY - (lineHeight * 13f));
         hudFont.draw(hudBatch, line15, startX, startY - (lineHeight * 14f));
         hudFont.draw(hudBatch, line16, startX, startY - (lineHeight * 15f));
+        hudFont.draw(hudBatch, line17, startX, startY - (lineHeight * 16f));
         hudFont.setColor(0.95f, 0.95f, 0.98f, 0.95f);
         hudBatch.end();
     }
@@ -2479,12 +2834,12 @@ public final class UniversalTestScene extends ScreenAdapter {
         collisionShape.calculateLocalInertia(definition.mass(), tmpInertia);
 
         btRigidBodyConstructionInfo constructionInfo = new btRigidBodyConstructionInfo(
-                definition.mass(),
-                motionState,
-                collisionShape,
-                tmpInertia);
+            definition.mass(),
+            motionState,
+            collisionShape,
+            tmpInertia);
         btRigidBody rigidBody = new btRigidBody(constructionInfo);
-        constructionInfo.dispose();
+        carriableConstructionInfos.add(constructionInfo);
 
         rigidBody.setFriction(0.85f);
         rigidBody.setRestitution(0.1f);
@@ -3107,6 +3462,10 @@ public final class UniversalTestScene extends ScreenAdapter {
             runtimeDoorMesh.dispose();
             runtimeDoorMesh = null;
         }
+        if (runtimeDoorKnobCollider != null) {
+            runtimeDoorKnobCollider.dispose();
+            runtimeDoorKnobCollider = null;
+        }
 
         for (ObjectMap.Entry<CarriableItem, Mesh> entry : carriableMeshes.entries()) {
             if (entry.value != null) {
@@ -3157,6 +3516,16 @@ public final class UniversalTestScene extends ScreenAdapter {
             }
         }
         staticCollisionShapes.clear();
+
+        for (btRigidBody.btRigidBodyConstructionInfo info : staticConstructionInfos) {
+            if (info != null) info.dispose();
+        }
+        staticConstructionInfos.clear();
+
+        for (btRigidBody.btRigidBodyConstructionInfo info : carriableConstructionInfos) {
+            if (info != null) info.dispose();
+        }
+        carriableConstructionInfos.clear();
 
         rigidBodyToCarriable.clear();
 

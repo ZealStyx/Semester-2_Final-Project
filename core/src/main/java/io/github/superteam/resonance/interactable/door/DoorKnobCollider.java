@@ -16,6 +16,7 @@ public final class DoorKnobCollider implements Disposable {
     private final btSphereShape shape;
     private final btDefaultMotionState motionState;
     private final btRigidBody body;
+    private btDiscreteDynamicsWorld attachedWorld;
 
     public DoorKnobCollider(Vector3 knobWorldPosition, btDiscreteDynamicsWorld world) {
         shape = new btSphereShape(KNOB_RADIUS);
@@ -24,9 +25,18 @@ public final class DoorKnobCollider implements Disposable {
         body = new btRigidBody(ci);
         body.setCollisionFlags(body.getCollisionFlags() | btCollisionObject.CollisionFlags.CF_NO_CONTACT_RESPONSE);
         ci.dispose();
-        if (world != null) {
-            world.addRigidBody(body);
+        attachToWorld(world);
+    }
+
+    public void attachToWorld(btDiscreteDynamicsWorld world) {
+        if (world == null || attachedWorld == world) {
+            return;
         }
+        if (attachedWorld != null) {
+            attachedWorld.removeRigidBody(body);
+        }
+        attachedWorld = world;
+        attachedWorld.addRigidBody(body);
     }
 
     public void syncPosition(Vector3 knobWorldPosition) {
@@ -43,6 +53,10 @@ public final class DoorKnobCollider implements Disposable {
 
     @Override
     public void dispose() {
+        if (attachedWorld != null) {
+            attachedWorld.removeRigidBody(body);
+            attachedWorld = null;
+        }
         body.dispose();
         motionState.dispose();
         shape.dispose();

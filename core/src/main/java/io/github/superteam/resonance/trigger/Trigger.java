@@ -51,4 +51,8 @@ public abstract class Trigger {
     }
 
     protected abstract boolean evaluate(TriggerEvaluationContext context);
+
+    public boolean isEvaluate(TriggerEvaluationContext context) {
+        return evaluate(context);
+    }
 }

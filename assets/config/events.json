@@ -56,6 +56,57 @@
           "value": true
         }
       ]
+    },
+    {
+      "id": "room-boundary-open-hall",
+      "displayName": "Room Boundary: Open Hall",
+      "repeatMode": "ONCE_PER_SESSION",
+      "cooldownSeconds": 0.0,
+      "actions": [
+        {
+          "type": "ROOM_TRANSITION",
+          "roomName": "Open Hall"
+        },
+        {
+          "type": "SHOW_SUBTITLE",
+          "text": "Entering Open Hall.",
+          "duration": 2.0
+        }
+      ]
+    },
+    {
+      "id": "room-boundary-crossroads",
+      "displayName": "Room Boundary: Crossroads",
+      "repeatMode": "ONCE_PER_SESSION",
+      "cooldownSeconds": 0.0,
+      "actions": [
+        {
+          "type": "ROOM_TRANSITION",
+          "roomName": "Crossroads"
+        },
+        {
+          "type": "SHOW_SUBTITLE",
+          "text": "Entering Crossroads.",
+          "duration": 2.0
+        }
+      ]
+    },
+    {
+      "id": "room-boundary-transition-strip",
+      "displayName": "Room Boundary: Transition Strip",
+      "repeatMode": "ONCE_PER_SESSION",
+      "cooldownSeconds": 0.0,
+      "actions": [
+        {
+          "type": "ROOM_TRANSITION",
+          "roomName": "Transition Strip"
+        },
+        {
+          "type": "SHOW_SUBTITLE",
+          "text": "Entering the transition strip.",
+          "duration": 2.0
+        }
+      ]
     }
   ]
 }

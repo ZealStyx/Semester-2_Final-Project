@@ -6,6 +6,7 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
+import io.github.superteam.resonance.trigger.conditions.CompoundTrigger;
 import io.github.superteam.resonance.trigger.conditions.ZoneTrigger;
 import java.util.ArrayList;
 import java.util.List;
@@ -66,16 +67,28 @@ public final class TriggerLoader {
             return null;
         }
 
-        if (!"ZONE".equals(type)) {
+        return switch (type) {
+            case "ZONE" -> {
+                BoundingBox volume = parseBoundingBox(triggerValue.get("volume"));
+                if (volume == null) {
+                    yield null;
+                }
+                yield new ZoneTrigger(id, targetEvent, cooldownSeconds, volume);
+            }
+            case "COMPOUND" -> parseCompoundTrigger(id, targetEvent, cooldownSeconds, triggerValue);
+            default -> null;
+        };
+    }
+
+    private static Trigger parseCompoundTrigger(String id, String targetEvent, float cooldownSeconds, JsonValue triggerValue) {
+        String modeName = triggerValue.getString("mode", "AND").trim().toUpperCase();
+        CompoundTrigger.Mode mode = "OR".equals(modeName) ? CompoundTrigger.Mode.OR : CompoundTrigger.Mode.AND;
+        JsonValue childrenNode = triggerValue.get("children");
+        List<Trigger> children = parseTriggers(childrenNode);
+        if (children.isEmpty()) {
             return null;
         }
-
-        BoundingBox volume = parseBoundingBox(triggerValue.get("volume"));
-        if (volume == null) {
-            return null;
-        }
-
-        return new ZoneTrigger(id, targetEvent, cooldownSeconds, volume);
+        return new CompoundTrigger(id, targetEvent, cooldownSeconds, mode, children);
     }
 
     private static BoundingBox parseBoundingBox(JsonValue volumeValue) {

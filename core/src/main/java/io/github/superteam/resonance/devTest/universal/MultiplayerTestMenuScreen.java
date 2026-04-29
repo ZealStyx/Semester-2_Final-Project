@@ -84,6 +84,10 @@ public class MultiplayerTestMenuScreen extends ScreenAdapter {
         if (Gdx.input.isKeyJustPressed(Input.Keys.H)) {
             launchGame(new MultiplayerLaunchConfig(MultiplayerLaunchConfig.Role.HOST));
         }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.U)) {
+            // Launch the Universal integration test (offline mode)
+            launchGame(new MultiplayerLaunchConfig(MultiplayerLaunchConfig.Role.OFFLINE));
+        }
         if (Gdx.input.isKeyJustPressed(Input.Keys.C)) {
             state = MenuState.CLIENT_CONNECT;
             discoveredHosts = null;
@@ -257,6 +261,7 @@ public class MultiplayerTestMenuScreen extends ScreenAdapter {
         drawCenteredText("Choose Mode:", centerY + 60, font);
 
         drawButton(centerX, centerY + 20, "H - HOST", isMouseOver(centerX, centerY + 20));
+        drawButton(centerX, centerY - 10, "U - UNIVERSAL TEST", isMouseOver(centerX, centerY - 10));
         drawButton(centerX, centerY - 40, "C - CLIENT", isMouseOver(centerX, centerY - 40));
         drawButton(centerX, centerY - 100, "O - OFFLINE", isMouseOver(centerX, centerY - 100));
         drawButton(centerX, centerY - 160, "G - GLTF MAP (offline)", isMouseOver(centerX, centerY - 160));

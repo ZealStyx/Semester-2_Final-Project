@@ -22,6 +22,15 @@ import io.github.superteam.resonance.map.MapDocument;
 import io.github.superteam.resonance.map.MapDocumentLoader;
 import io.github.superteam.resonance.map.MapObject;
 import io.github.superteam.resonance.map.MapObjectType;
+import io.github.superteam.resonance.prop.PropDefinitionLoader;
+import io.github.superteam.resonance.prop.PropDefinitionRegistry;
+import io.github.superteam.resonance.prop.PropInstanceSpawner;
+import io.github.superteam.resonance.prop.PropDefinition;
+import io.github.superteam.resonance.prop.PropBehavior;
+import io.github.superteam.resonance.lighting.LightManager;
+import io.github.superteam.resonance.lighting.FlickerController;
+import io.github.superteam.resonance.lighting.GameLight;
+import com.badlogic.gdx.graphics.Color;
 import io.github.superteam.resonance.settings.KeybindRegistry;
 import io.github.superteam.resonance.settings.SettingsData;
 import io.github.superteam.resonance.settings.SettingsSystem;
@@ -59,6 +68,7 @@ public class GameScreen extends ScreenAdapter {
 	private EnemyController enemyController;
 	private final Array<DoorController> doorControllers = new Array<>();
 	private MapDocument mapDocument;
+	private LightManager lightManager;
 	private final Vector3 bootstrapPlayerPosition = new Vector3();
 	private final Vector3 bootstrapPlayerForward = new Vector3(0f, 0f, -1f);
 
@@ -226,6 +236,10 @@ public class GameScreen extends ScreenAdapter {
 		if (mapDocument == null) {
 			mapDocument = MapDocument.defaults();
 		}
+		// Load prop definitions and spawn instances
+		PropDefinitionLoader propLoader = new PropDefinitionLoader();
+		PropDefinitionRegistry propRegistry = propLoader.loadDirectory("props");
+		PropInstanceSpawner spawner = new PropInstanceSpawner(propRegistry);
 
 		if (mapDocument.objects != null) {
 			for (MapObject mapObject : mapDocument.objects) {
@@ -239,6 +253,47 @@ public class GameScreen extends ScreenAdapter {
 
 				if (mapObject.type == MapObjectType.DOOR && mapObject.position != null) {
 					doorControllers.add(buildDoorFromMapObject(mapObject));
+				}
+
+				// GLTF props / prop definitions
+				if (mapObject.type == MapObjectType.GLTF_PROP) {
+					String defId = mapObject.property("propDef", null);
+					if (defId == null || defId.isBlank()) {
+						defId = mapObject.property("propId", null);
+					}
+					if (defId != null && !defId.isBlank()) {
+						spawner.spawn(defId, mapObject.position == null ? new com.badlogic.gdx.math.Vector3() : mapObject.position, parseFloatProperty(mapObject, "rotationY", 0f));
+						PropDefinition def = propRegistry.find(defId);
+						if (def != null) {
+							if (def.behavior == PropBehavior.TRAVERSABLE || def.behavior == PropBehavior.INTERACTIVE) {
+								doorControllers.add(buildDoorFromMapObject(mapObject));
+							}
+							if (def.behavior == io.github.superteam.resonance.prop.PropBehavior.LIGHT_EMITTER) {
+								// create a simple GameLight from prop instance and register it
+								String lightId = mapObject.id == null || mapObject.id.isBlank() ? def.id : mapObject.id;
+								float radius = 3.0f;
+								try { radius = Float.parseFloat(mapObject.property("radius", "3.0")); } catch (Exception ignored) {}
+								float intensity = 1.0f;
+								try { intensity = Float.parseFloat(mapObject.property("intensity", "1.0")); } catch (Exception ignored) {}
+								Color color = Color.WHITE.cpy();
+								try {
+									String col = mapObject.property("color", "");
+									if (col != null && !col.isBlank()) {
+										String[] parts = col.split(",");
+										if (parts.length >= 3) {
+											float r = Float.parseFloat(parts[0]);
+											float g = Float.parseFloat(parts[1]);
+											float b = Float.parseFloat(parts[2]);
+											color = new Color(r, g, b, 1f);
+										}
+									}
+								} catch (Exception ignored) {}
+								if (lightManager != null) {
+									lightManager.register(new GameLight(lightId, mapObject.position == null ? new com.badlogic.gdx.math.Vector3() : mapObject.position, color, radius, intensity, false));
+								}
+							}
+						}
+					}
 				}
 			}
 		}
@@ -260,6 +315,7 @@ public class GameScreen extends ScreenAdapter {
 		gameAudioSystem = new GameAudioSystem();
 		eventBus = new EventBus();
 		eventState = new EventState();
+		lightManager = new LightManager(new FlickerController());
 
 		// Future wiring:
 		// - Event/Trigger runtime with FINAL_EVENTS_PATH and FINAL_TRIGGERS_PATH

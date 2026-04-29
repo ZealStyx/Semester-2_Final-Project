@@ -19,6 +19,7 @@ import io.github.superteam.resonance.story.StorySystem;
 import io.github.superteam.resonance.player.InventorySystem;
 import io.github.superteam.resonance.lighting.FlashlightController;
 import io.github.superteam.resonance.behavior.BehaviorSystem;
+import io.github.superteam.resonance.transition.RoomTransitionSystem;
 
 /**
  * Shared trigger and event runtime for test scenes.
@@ -38,6 +39,7 @@ public final class EventTriggerRuntime {
     private InventorySystem inventorySystem;
     private FlashlightController flashlightController;
     private BehaviorSystem behaviorSystem;
+    private RoomTransitionSystem roomTransitionSystem;
 
     private EventTriggerRuntime(
         EventBus eventBus,
@@ -73,7 +75,8 @@ public final class EventTriggerRuntime {
         StorySystem story,
         InventorySystem inventory,
         FlashlightController flashlight,
-        BehaviorSystem behavior
+        BehaviorSystem behavior,
+        RoomTransitionSystem roomTransition
     ) {
         this.sanitySystem = sanity;
         this.jumpScareDirector = jumpScare;
@@ -83,6 +86,7 @@ public final class EventTriggerRuntime {
         this.inventorySystem = inventory;
         this.flashlightController = flashlight;
         this.behaviorSystem = behavior;
+        this.roomTransitionSystem = roomTransition;
     }
 
     public void update(
@@ -135,7 +139,8 @@ public final class EventTriggerRuntime {
             storySystem,
             inventorySystem,
             flashlightController,
-            behaviorSystem
+            behaviorSystem,
+            roomTransitionSystem
         );
         eventBus.fire(eventId, context, eventState);
     }

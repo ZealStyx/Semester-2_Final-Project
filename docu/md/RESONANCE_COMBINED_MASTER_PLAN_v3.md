@@ -2,15 +2,16 @@
 
 **Project:** `io.github.superteam.resonance`  
 **Scope:** `core` + `lwjgl3` + `server` + `shared` modules  
-**Total systems:** 23  
+**Total systems:** 25  
 **Source documents merged:**
 - `RESONANCE_MASTER_PLAN.md` — 17 core systems
 - `MASTER_PLAN_ADDENDUM.md` — 5 patches (integrated inline)
 - `KMEANS_BEHAVIOR_PLAN.md` — System 18: Player Behaviour Classification
 - `THREE_FEATURES_PLAN.md` — Systems 19–21: Footprint Tracking, Hallucinations, Breath-Hold
 - **v2 changes** — System 7 door physics rewrite, System 23 UniversalTestScreen overhaul
+- **v3 changes** — System 24: Prop Definition Editor; System 5 Map Editor updated with Prop Library integration and full `ObjectPalette` spec
 
-> Addendum patches are **not** listed as separate sections — they are integrated directly into the systems they affect. The `[PATCH]` marker calls out where a patch was applied. `[v2]` marks changes introduced in this revision.
+> Addendum patches are **not** listed as separate sections — they are integrated directly into the systems they affect. The `[PATCH]` marker calls out where a patch was applied. `[v2]` marks changes introduced in this revision. `[v3]` marks changes introduced in this revision.
 
 ---
 
@@ -53,7 +54,9 @@ This file is the canonical handoff document. GitHub Copilot and any developer pi
 2. [Sound System — WAV Layer](#2-sound-system--wav-layer)
 3. [Trigger System](#3-trigger-system)
 4. [Auto-Bullet from `-map.gltf`](#4-auto-bullet-from--mapgltf)
-5. [Map Editor — Swing Tool](#5-map-editor--swing-tool)
+5. [Map Editor — Swing Tool](#5-map-editor--swing-tool) ← **[v3] Prop Library integration**
+24. [Prop Definition Editor](#24-prop-definition-editor--v3) ← **[v3] New**
+25. [Prop Instance Spawner](#25-prop-instance-spawner--v3) ← **[v3] New**
 
 ### Group A — Core Gameplay Loops
 6. [Enemy AI System](#6-enemy-ai-system)
@@ -636,22 +639,67 @@ public enum MapObjectType {
 
 ### What it does
 
-A separate Swing window for placing static props, trigger volumes, spawn points, sound emitters, lights, and room boundaries. Saves a JSON document that `MapDocumentLoader` reads at runtime.
+A separate Swing window for placing props, trigger volumes, spawn points, sound emitters, lights, checkpoints, and room boundaries into the single `resonance-map.json`. Saves a JSON document that `MapDocumentLoader` reads at runtime.
 
 **[PATCH: Addendum §4]** — Single map architecture. There is only **one map** (`resonance-map.gltf`) and one `MapDocument` JSON. The editor manages all objects for all rooms in a single file. The `SceneOutlinePanel` supports filtering by room name via a search box.
 
 **[PATCH: Addendum §2]** — `ModelDebugScreen` now has collision wireframe toggle (K key) and texture fix via `SceneManager`.
 
+**[v3]** — `ObjectPalette` now has a **Prop Library** tab. Any `.prop.json` saved by the Prop Definition Editor (System 24) automatically appears as a draggable item. Placing a prop from this tab creates a `GLTF_PROP` `MapObject` entry with a `propDef` property pointing to its definition file.
+
 ### Package: `mapeditor` (in `lwjgl3`)
 
 ```
 mapeditor/
-  MapEditorPanel.java
-  ObjectPalette.java
-  SceneOutlinePanel.java
-  ObjectPropertyPanel.java
-  MapEditorIntegration.java
+  MapEditorPanel.java          ← root Swing frame
+  ObjectPalette.java           ← tabbed palette: Primitives | Events | Prop Library [v3]
+  PropLibraryPanel.java        ← [v3] scans props/*.prop.json, shows thumbnail grid
+  SceneOutlinePanel.java       ← lists all MapObjects; filter by room
+  ObjectPropertyPanel.java     ← edits selected MapObject fields + prop instance overrides [v3]
+  MapEditorIntegration.java    ← F12 hook, bridges LibGDX ↔ Swing
 ```
+
+### `ObjectPalette` — tabs [v3]
+
+The palette is a `JTabbedPane` with three tabs:
+
+| Tab | Contents |
+|-----|----------|
+| **Primitives & Logic** | SPAWN_POINT, CHECKPOINT, ROOM_BOUNDARY, TRIGGER_VOLUME, SOUND_EMITTER, LIGHT_POINT, DIALOGUE_TRIGGER |
+| **Events** | Drag an event ID from the loaded `events.json` to attach it to a trigger or boundary |
+| **Prop Library** | Grid of prop cards loaded from `props/*.prop.json` — one card per prop definition |
+
+### `PropLibraryPanel` — prop card grid [v3]
+
+```java
+public final class PropLibraryPanel extends JPanel {
+    // Scans Gdx.files.local("props/") for *.prop.json on open
+    // Each card shows: displayName, category icon, behavior tags
+    // Double-click or drag → calls MapEditorPanel.beginPlaceProp(PropDefinition)
+    public void reload();                          // re-scans props/ folder
+    public void setPlacementListener(PropPlacementListener l);
+}
+
+public interface PropPlacementListener {
+    void onPropSelected(PropDefinition def);       // user clicked a card
+}
+```
+
+### `ObjectPropertyPanel` — prop instance overrides [v3]
+
+When the selected `MapObject` has `type == GLTF_PROP`, the panel shows two sections:
+
+1. **Definition** (read-only) — modelPath, category, anchors list, behaviors from the `.prop.json`
+2. **Instance overrides** — editable fields that are written into `MapObject.properties`:
+
+| Field | Key in `properties` | Example |
+|-------|---------------------|---------|
+| Rotation (Euler Y) | `rotationY` | `"90"` |
+| Uniform scale | `scale` | `"1.0"` |
+| Lock state | `lockState` | `"LOCKED"` |
+| On-open event | `onOpenEvent` | `"door-server-room-open"` |
+| On-close event | `onCloseEvent` | `""` |
+| Custom tag | any string key | any string value |
 
 ### `ModelDebugScreen` — texture fix [PATCH: Addendum §3]
 
@@ -708,7 +756,7 @@ public final class CollisionWireframeRenderer {
 
 > **Performance note:** For meshes with > 30 000 triangles, build a reusable `Mesh` with `GL_LINES` topology instead of immediate-mode `ShapeRenderer` calls.
 
-### Map JSON format — single map [PATCH: Addendum §4]
+### Map JSON format — single map [PATCH: Addendum §4] [v3]
 
 ```json
 {
@@ -736,18 +784,545 @@ public final class CollisionWireframeRenderer {
       "type": "CHECKPOINT",
       "position": { "x": 8.0, "y": 0.0, "z": -3.0 },
       "properties": { "checkpointId": "server-room-cleared" }
+    },
+    {
+      "id": "door-server-room-entrance",
+      "type": "GLTF_PROP",
+      "position": { "x": 4.0, "y": 0.0, "z": -2.0 },
+      "properties": {
+        "propDef": "props/door-office.prop.json",
+        "rotationY": "90",
+        "scale": "1.0",
+        "lockState": "UNLOCKED",
+        "onOpenEvent": "door-server-room-open"
+      }
+    },
+    {
+      "id": "light-hallway-flicker",
+      "type": "GLTF_PROP",
+      "position": { "x": 2.0, "y": 3.0, "z": 1.0 },
+      "properties": {
+        "propDef": "props/light-ceiling-bulb.prop.json",
+        "scale": "1.0",
+        "flickerProfile": "erratic"
+      }
+    },
+    {
+      "id": "vent-server-room-ceiling",
+      "type": "GLTF_PROP",
+      "position": { "x": 9.0, "y": 3.4, "z": -4.0 },
+      "properties": {
+        "propDef": "props/vent-ceiling.prop.json",
+        "rotationY": "0",
+        "onTraverseEvent": "player-entered-vent"
+      }
     }
   ]
 }
 ```
 
+> **Key rule:** `GLTF_PROP` entries are prop *instances*. Their behaviour is fully determined by the `.prop.json` pointed to by the `propDef` property. Instance overrides in `properties` are applied on top at spawn time by `PropInstanceSpawner` (System 25).
+
+---
+
+## 24. Prop Definition Editor `[v3]`
+
+### What it does
+
+A LibGDX screen (extending `ScreenAdapter`, opened from the `ModelDebugScreen` or via a menu) that lets a developer load any `.gltf` / `.glb` prop model and author its **definition file** — a `.prop.json` that describes anchor points, behaviors, physics hints, and sound slots. These definitions are the vocabulary the Map Editor's Prop Library tab reads.
+
+**Think of it as:** "This is what a door *is*" — where the hinge pivot lives, where the knob is, what sounds it emits and from where, how far it swings.
+
+The Map Editor (System 5) then says: "Put *this* door *here*, rotated 90°, locked."
+
+### Package: `propedit` (in `core`, usable from `lwjgl3` devtest)
+
+```
+propedit/
+  PropDefEditorScreen.java      ← main LibGDX screen
+  PropDefEditorState.java       ← mutable working state (model path, anchors list, etc.)
+  AnchorGizmo.java              ← renders a sphere + axis cross at anchor world position
+  MeshRaycaster.java            ← CPU-side ray vs mesh triangle intersection for click-to-place
+  PropDefSerializer.java        ← read/write PropDefinition to/from JSON (uses LibGDX Json)
+```
+
+### Core data model: `PropDefinition`
+
+```
+prop/
+  PropDefinition.java           ← the saved data object; also used at runtime by PropInstanceSpawner
+  PropAnchor.java               ← named 3D point in model-local space
+  PropSoundSlot.java            ← named audio emitter position in model-local space
+  PropPhysicsHints.java         ← swing axis, open angle, mass, collision shape override
+  PropCategory.java             ← enum: DOOR, LIGHT, VENT, DRAWER, CABINET, DETECTOR, ITEM_HOLDER, GENERIC
+  PropBehavior.java             ← enum: OPENABLE, CLOSEABLE, LOCKABLE, FLICKERABLE, INTERACTABLE,
+                                         TRAVERSABLE, GRABBABLE, EMITS_SOUND, EMITS_LIGHT, TRIGGERS_EVENT
+  PropDefinitionLoader.java     ← scans props/ folder at startup; indexed by id
+  PropDefinitionRegistry.java   ← singleton registry; PropInstanceSpawner and Map Editor both read from it
+```
+
+### `PropDefinition` — full Java structure
+
+```java
+package io.github.superteam.resonance.prop;
+
+import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.ObjectMap;
+
+/**
+ * Describes what a prop model IS: its interaction anchors, behaviours, audio slots,
+ * and physics configuration. Saved to props/<id>.prop.json.
+ *
+ * Instances in the map (MapObject.type == GLTF_PROP) reference this by id.
+ * PropInstanceSpawner reads the definition + the instance's MapObject.properties
+ * to create the correct runtime controller.
+ */
+public final class PropDefinition {
+    /** Unique identifier. Must match the filename stem: "door-office" → props/door-office.prop.json */
+    public String id;
+    /** Human-readable label shown in the Map Editor Prop Library. */
+    public String displayName;
+    /** Path to the GLTF/GLB model asset, relative to assets/. */
+    public String modelPath;
+    /** Primary category — drives the Map Editor icon and the default spawner path. */
+    public PropCategory category = PropCategory.GENERIC;
+    /** What the prop can do. At least one required. */
+    public Array<PropBehavior> behaviors = new Array<>();
+    /**
+     * Named 3D points in model-local space.
+     *
+     * Well-known anchor names (runtime systems look for these by name):
+     *   "hinge"       — DoorController pivot axis origin
+     *   "knob"        — raycast grab target for door drag
+     *   "light_emit"  — LightManager point-light origin
+     *   "sound_emit"  — default SpatialSfxEmitter position
+     *   "open_dir"    — unit vector (encoded as 1m offset from origin) for vent/drawer slide axis
+     *   "interact"    — crosshair focus target (falls back to model centre if absent)
+     */
+    public Array<PropAnchor> anchors = new Array<>();
+    /** Named audio emitter positions. Maps slot name → local position. */
+    public Array<PropSoundSlot> soundSlots = new Array<>();
+    /** Physics configuration for openable / grabbable props. */
+    public PropPhysicsHints physicsHints = new PropPhysicsHints();
+    /**
+     * Freeform string→string tags for future extensibility.
+     * Example: { "ventCrawlWidth": "0.6", "drawerDepth": "0.4" }
+     * Runtime systems check this map when no typed field covers their need.
+     */
+    public ObjectMap<String, String> tags = new ObjectMap<>();
+}
+```
+
+### `PropAnchor`
+
+```java
+public final class PropAnchor {
+    /** Name used by runtime systems to look up this point. */
+    public String name;
+    /** Model-local X, Y, Z. */
+    public float x, y, z;
+    /** Optional human note shown in the editor tooltip. */
+    public String description = "";
+}
+```
+
+### `PropSoundSlot`
+
+```java
+public final class PropSoundSlot {
+    public String name;       // e.g. "creak_source", "motor_hum"
+    public float x, y, z;    // model-local position
+    public String defaultAsset = ""; // optional default WAV path for this slot
+}
+```
+
+### `PropPhysicsHints`
+
+```java
+public final class PropPhysicsHints {
+    /** Axis the prop rotates around: "X", "Y", or "Z". */
+    public String swingAxis = "Y";
+    /** Maximum open angle in degrees (doors: 90, cabinet: 120, vent: 85). */
+    public float openAngleDeg = 90f;
+    /** Simulated mass in kg — affects drag feel and barge impact sound volume. */
+    public float mass = 8f;
+    /**
+     * Override collision shape for this prop:
+     *   "BOX" — single AABB computed from bounding box
+     *   "MESH" — full BVH mesh collider (expensive — avoid for complex props)
+     *   "NONE" — no collision (decorative props)
+     */
+    public String collisionShape = "BOX";
+    /** For sliding props (drawer, vent): max slide distance in metres. */
+    public float slideDistanceMetres = 0f;
+}
+```
+
+### `PropCategory` enum
+
+```java
+public enum PropCategory {
+    DOOR,         // swinging or sliding door panel
+    LIGHT,        // ceiling bulb, wall lamp, floor lamp
+    VENT,         // crawlspace cover, ceiling vent
+    DRAWER,       // slides along one axis
+    CABINET,      // door swings open on hinge
+    DETECTOR,     // metal detector gate, motion sensor
+    ITEM_HOLDER,  // shelf, table, rack (no active behaviour, but has interaction anchor)
+    GENERIC;      // catch-all for custom props
+
+    public String icon() {
+        return switch (this) {
+            case DOOR        -> "🚪";
+            case LIGHT       -> "💡";
+            case VENT        -> "🌬";
+            case DRAWER      -> "🗄";
+            case CABINET     -> "🗃";
+            case DETECTOR    -> "📡";
+            case ITEM_HOLDER -> "📦";
+            case GENERIC     -> "⬜";
+        };
+    }
+}
+```
+
+### `PropBehavior` enum
+
+```java
+public enum PropBehavior {
+    OPENABLE,       // can transition to open state (doors, vents, drawers)
+    CLOSEABLE,      // can be closed after opening
+    LOCKABLE,       // supports DoorLockState (UNLOCKED / LOCKED / KEYCARD_REQUIRED)
+    FLICKERABLE,    // light flicker support via FlickerController
+    INTERACTABLE,   // player can press [F] near it
+    TRAVERSABLE,    // player can physically pass through it (vent, open door)
+    GRABBABLE,      // supports physics drag via DoorGrabInteraction
+    EMITS_SOUND,    // has at least one PropSoundSlot
+    EMITS_LIGHT,    // has a "light_emit" anchor; LightManager registers a GameLight here
+    TRIGGERS_EVENT; // fires a GameEvent on interaction (uses MapObject.properties.onOpenEvent etc.)
+}
+```
+
+### `PropDefEditorScreen` — editor UX
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  [Load Model]  [Save .prop.json]  [Open props/ Folder]       │  ← toolbar (LibGDX BitmapFont buttons)
+├──────────────────────────────────────────┬───────────────────┤
+│                                          │ PROP PROPERTIES   │
+│   3D Viewport                            │ ─────────────────  │
+│   (orbit camera, GLTF model rendered)    │ id:               │
+│                                          │ displayName:      │
+│   ● anchor gizmos rendered as coloured   │ category: [DOOR▾] │
+│     spheres (0.04 m radius)             │ behaviors:        │
+│   ● selected anchor highlighted in white │  ☑ OPENABLE       │
+│   ● right-click surface → place new      │  ☑ LOCKABLE       │
+│     anchor at hit point                  │  ☑ GRABBABLE      │
+│   ● left-click gizmo → select anchor     │  ☑ INTERACTABLE   │
+│   ● drag selected anchor with G key      │  ☐ FLICKERABLE    │
+│   ● delete selected anchor with Del      │  ☑ TRIGGERS_EVENT │
+│                                          │ ─────────────────  │
+│                                          │ ANCHORS           │
+│                                          │  hinge  [0,0,0]   │
+│                                          │  knob   [.85,.9,0]│
+│                                          │  [+ Add Anchor]   │
+│                                          │ ─────────────────  │
+│                                          │ SOUND SLOTS       │
+│                                          │  creak_src [edit] │
+│                                          │  [+ Add Slot]     │
+│                                          │ ─────────────────  │
+│                                          │ PHYSICS HINTS     │
+│                                          │  axis: Y          │
+│                                          │  openAngle: 90    │
+│                                          │  mass: 8          │
+│                                          │  shape: BOX       │
+└──────────────────────────────────────────┴───────────────────┘
+  [Tab] cycle anchors  [R] raycast-place mode  [G] grab/move  [Del] delete  [S] save
+```
+
+> The right-hand panel is rendered via LibGDX `SpriteBatch` + `BitmapFont` + basic rectangle hit testing — **no Swing dependency in `core`**. The editor is a first-class LibGDX `ScreenAdapter` accessible from the `ModelDebugScreen` via an [Edit Prop] button.
+
+### `MeshRaycaster` — click-to-place anchor
+
+```java
+/**
+ * CPU-side ray vs mesh triangle intersection.
+ * Uses the SceneModel's ModelInstance to read vertex positions.
+ * Returns the hit point in model-local space, or null if no hit.
+ */
+public final class MeshRaycaster {
+    public static Vector3 raycast(ModelInstance instance, Ray worldRay) { ... }
+}
+```
+
+Flow: user right-clicks viewport → `MeshRaycaster.raycast()` returns local hit point → `PropDefEditorState.addAnchorAt(name, localPoint)` → `AnchorGizmo` renders a sphere there.
+
+### `PropDefSerializer` — JSON read/write
+
+Uses LibGDX `Json` (same serializer as `MapDocumentSerializer`). Saves to `props/<id>.prop.json` via `Gdx.files.local()`.
+
+```java
+public final class PropDefSerializer {
+    public void save(PropDefinition def);                          // writes props/<def.id>.prop.json
+    public PropDefinition load(String id);                        // reads props/<id>.prop.json
+    public Array<PropDefinition> loadAll();                       // loads all *.prop.json in props/
+}
+```
+
+### Prop JSON format — `props/door-office.prop.json`
+
+```json
+{
+  "id": "door-office",
+  "displayName": "Office Door",
+  "modelPath": "models/props/door-office.gltf",
+  "category": "DOOR",
+  "behaviors": ["OPENABLE", "CLOSEABLE", "LOCKABLE", "GRABBABLE", "INTERACTABLE", "TRIGGERS_EVENT"],
+  "anchors": [
+    { "name": "hinge",    "x": 0.00, "y": 0.00, "z": 0.00, "description": "Pivot axis origin" },
+    { "name": "knob",     "x": 0.85, "y": 0.92, "z": 0.02, "description": "Grab raycast target" },
+    { "name": "interact", "x": 0.42, "y": 1.00, "z": 0.02, "description": "F-key focus point" }
+  ],
+  "soundSlots": [
+    { "name": "creak_source", "x": 0.42, "y": 1.00, "z": 0.02, "defaultAsset": "audio/sfx/door/creak_soft.wav" }
+  ],
+  "physicsHints": {
+    "swingAxis": "Y",
+    "openAngleDeg": 90.0,
+    "mass": 8.0,
+    "collisionShape": "BOX",
+    "slideDistanceMetres": 0.0
+  },
+  "tags": {}
+}
+```
+
+```json
+{
+  "id": "light-ceiling-bulb",
+  "displayName": "Ceiling Light Bulb",
+  "modelPath": "models/props/light-ceiling-bulb.gltf",
+  "category": "LIGHT",
+  "behaviors": ["FLICKERABLE", "EMITS_LIGHT", "EMITS_SOUND"],
+  "anchors": [
+    { "name": "light_emit", "x": 0.0, "y": -0.05, "z": 0.0, "description": "Point light origin" }
+  ],
+  "soundSlots": [
+    { "name": "buzz", "x": 0.0, "y": -0.05, "z": 0.0, "defaultAsset": "audio/sfx/ambience/bulb_buzz.wav" }
+  ],
+  "physicsHints": { "collisionShape": "NONE" },
+  "tags": { "flickerProfile": "erratic" }
+}
+```
+
+```json
+{
+  "id": "vent-ceiling",
+  "displayName": "Ceiling Vent Cover",
+  "modelPath": "models/props/vent-ceiling.gltf",
+  "category": "VENT",
+  "behaviors": ["OPENABLE", "INTERACTABLE", "TRAVERSABLE", "TRIGGERS_EVENT"],
+  "anchors": [
+    { "name": "hinge",    "x": 0.00, "y": 0.00, "z": 0.00, "description": "Cover hinge" },
+    { "name": "interact", "x": 0.00, "y": -0.30, "z": 0.00, "description": "F-key focus point" }
+  ],
+  "soundSlots": [
+    { "name": "creak_source", "x": 0.0, "y": 0.0, "z": 0.0, "defaultAsset": "audio/sfx/vent/creak.wav" }
+  ],
+  "physicsHints": {
+    "swingAxis": "X",
+    "openAngleDeg": 85.0,
+    "mass": 2.0,
+    "collisionShape": "BOX"
+  },
+  "tags": {}
+}
+```
+
+```json
+{
+  "id": "drawer-filing-cabinet",
+  "displayName": "Filing Cabinet Drawer",
+  "modelPath": "models/props/drawer-filing.gltf",
+  "category": "DRAWER",
+  "behaviors": ["OPENABLE", "CLOSEABLE", "INTERACTABLE", "TRIGGERS_EVENT"],
+  "anchors": [
+    { "name": "interact", "x": 0.0, "y": 0.0, "z": 0.35, "description": "Pull handle" }
+  ],
+  "soundSlots": [
+    { "name": "slide_source", "x": 0.0, "y": 0.0, "z": 0.2, "defaultAsset": "audio/sfx/furniture/drawer_open.wav" }
+  ],
+  "physicsHints": {
+    "swingAxis": "Z",
+    "openAngleDeg": 0.0,
+    "mass": 3.0,
+    "collisionShape": "BOX",
+    "slideDistanceMetres": 0.40
+  },
+  "tags": {}
+}
+```
+
+---
+
+## 25. Prop Instance Spawner `[v3]`
+
+### What it does
+
+At scene load time, reads every `GLTF_PROP` entry in the `MapDocument`, looks up its `PropDefinition` from `PropDefinitionRegistry`, and creates the correct runtime controller. This is the bridge between the editor's data and the gameplay systems.
+
+### Package: `prop` (in `core`)
+
+```
+prop/
+  PropDefinition.java          ← (see System 24)
+  PropAnchor.java
+  PropSoundSlot.java
+  PropPhysicsHints.java
+  PropCategory.java
+  PropBehavior.java
+  PropDefinitionLoader.java
+  PropDefinitionRegistry.java
+  PropInstanceSpawner.java     ← the actual bridge
+  PropInstance.java            ← runtime handle returned per spawned prop
+```
+
+### `PropDefinitionRegistry`
+
+```java
+/**
+ * Loaded once at startup. Maps prop id → PropDefinition.
+ * Both PropLibraryPanel (editor) and PropInstanceSpawner (runtime) read from this.
+ */
+public final class PropDefinitionRegistry {
+    public static PropDefinitionRegistry load();   // scans props/*.prop.json
+    public PropDefinition get(String id);          // null if not found
+    public Array<PropDefinition> all();
+}
+```
+
+### `PropInstanceSpawner`
+
+```java
+/**
+ * Reads MapDocument.objects where type == GLTF_PROP and instantiates runtime systems.
+ *
+ * Spawning decision table:
+ *   category == DOOR   + GRABBABLE  → creates DoorController with anchors from PropDefinition
+ *   category == LIGHT  + FLICKERABLE → registers a GameLight at the "light_emit" anchor
+ *   category == VENT   + OPENABLE   → creates a VentController (lightweight DoorController variant)
+ *   category == DRAWER + OPENABLE   → creates a DrawerController
+ *   EMITS_LIGHT                     → LightManager.register() at "light_emit" world position
+ *   EMITS_SOUND                     → registers SpatialSfxEmitter per PropSoundSlot
+ *   INTERACTABLE                    → registers with InteractableRegistry at "interact" anchor
+ *   TRIGGERS_EVENT                  → wires onOpenEvent / onCloseEvent from MapObject.properties
+ *
+ * All anchor positions are transformed from model-local → world space using
+ * the instance position + rotationY + scale from MapObject.properties.
+ */
+public final class PropInstanceSpawner {
+    public Array<PropInstance> spawnAll(
+        MapDocument doc,
+        PropDefinitionRegistry registry,
+        InteractableRegistry interactables,
+        LightManager lights,
+        EventBus events,
+        GameAudioSystem audio
+    );
+}
+```
+
+### `PropInstance` — runtime handle
+
+```java
+/** Returned per spawned GLTF_PROP. Holds all runtime controllers created for this instance. */
+public final class PropInstance {
+    public final String mapObjectId;
+    public final PropDefinition definition;
+    public final SceneModel sceneModel;                  // rendered model
+    public final @Nullable DoorController door;          // non-null for DOOR + GRABBABLE
+    public final @Nullable GameLight light;              // non-null for EMITS_LIGHT
+    public final Array<SpatialSfxEmitter> soundEmitters; // one per PropSoundSlot
+
+    /** Convenience: world position of a named anchor, or null if absent. */
+    public Vector3 anchorWorld(String name) { ... }
+}
+```
+
+### `MapObjectType` — updated enum [v3]
+
+```java
+public enum MapObjectType {
+    BOX_PROP,
+    CYLINDER_PROP,
+    DOOR,           // legacy — prefer GLTF_PROP + door-*.prop.json
+    FURNITURE,
+    TRIGGER_VOLUME,
+    SPAWN_POINT,
+    SOUND_EMITTER,
+    LIGHT_POINT,
+    DIALOGUE_TRIGGER,
+    CHECKPOINT,
+    ROOM_BOUNDARY,
+    GLTF_PROP       // [v3] prop instance — requires MapObject.properties.propDef
+}
+```
+
+> **Deprecation note:** The standalone `DOOR` type will remain for backward-compat but new maps should use `GLTF_PROP` + a door prop definition so anchors are data-driven.
+
+### Wiring in `GltfMapTestScene`
+
+```java
+// At scene startup:
+PropDefinitionRegistry propRegistry = PropDefinitionRegistry.load();
+PropInstanceSpawner spawner = new PropInstanceSpawner();
+Array<PropInstance> propInstances = spawner.spawnAll(
+    mapDocument, propRegistry, interactableRegistry,
+    lightManager, eventBus, audioSystem
+);
+
+// Each frame:
+for (PropInstance inst : propInstances) {
+    if (inst.door != null) {
+        inst.door.update(delta, eventContext);
+        float noise = inst.door.consumeNoiseIntensity();
+        if (noise > 0f) propagationOrchestrator.emitNoise(inst.anchorWorld("hinge"), noise);
+    }
+}
+
+// Rendering:
+modelBatch.begin(camera);
+for (PropInstance inst : propInstances) {
+    inst.sceneModel.render(modelBatch, environment);
+}
+modelBatch.end();
+```
+
+### Acceptance Criteria — Prop System
+
+| Test | Expected |
+|------|----------|
+| Open Prop Editor from ModelDebugScreen | `PropDefEditorScreen` loads; model viewport renders |
+| Load `door-office.gltf` in editor | Model displays; no existing anchors yet |
+| Right-click door surface | Anchor sphere appears at click point; name field focused |
+| Name anchor "hinge" + add "knob" | Both spheres visible; correct local coords shown |
+| Add DOOR + OPENABLE + GRABBABLE behaviors | Checkboxes reflect selection |
+| Save → check file system | `props/door-office.prop.json` exists with correct JSON |
+| Open Map Editor (F12) | Prop Library tab lists "Office Door" card |
+| Drag prop card to map | `GLTF_PROP` MapObject created with `propDef: "props/door-office.prop.json"` |
+| Set `rotationY: 90`, `lockState: LOCKED` in property panel | `resonance-map.json` contains those overrides |
+| Launch game with updated `resonance-map.json` | Door renders at correct position/rotation |
+| F near door (unlocked) | Drag session starts; door swings; creak plays from `creak_source` slot |
+| F near door (locked instance) | Locked sound; no drag |
+| Light prop placed in map | `GameLight` registered at `light_emit` anchor world position; illuminates scene |
+| Vent prop placed | Can interact; opens on F; `onTraverseEvent` fires when player enters |
+| Add unknown behavior tag `"ventCrawlWidth": "0.6"` | Saved in `tags`; no crash at runtime |
+
+---
+
 ---
 
 # Group A — Core Gameplay Loops
-
----
-
-## 6. Enemy AI System
 
 ### What it does
 
@@ -2434,8 +3009,18 @@ core/src/main/java/io/github/superteam/resonance/
 
   map/
     MapCollisionBuilder.java  MapLoader.java  LoadedMap.java
-    MapDocument.java  MapObject.java  MapObjectType.java
+    MapDocument.java  MapObject.java  MapObjectType.java     ← [v3] GLTF_PROP updated
     MapDocumentLoader.java  MapDocumentSerializer.java
+
+  prop/                                                       ← [v3] new package
+    PropDefinition.java  PropAnchor.java  PropSoundSlot.java
+    PropPhysicsHints.java  PropCategory.java  PropBehavior.java
+    PropDefinitionLoader.java  PropDefinitionRegistry.java
+    PropInstanceSpawner.java  PropInstance.java
+
+  propedit/                                                   ← [v3] new package (core, no Swing)
+    PropDefEditorScreen.java  PropDefEditorState.java
+    AnchorGizmo.java  MeshRaycaster.java  PropDefSerializer.java
 
   enemy/
     EnemyController.java  EnemyStateMachine.java  EnemyState.java
@@ -2533,6 +3118,7 @@ lwjgl3/src/main/java/io/github/superteam/resonance/
   mapeditor/
     MapEditorPanel.java  ObjectPalette.java  SceneOutlinePanel.java
     ObjectPropertyPanel.java  MapEditorIntegration.java
+    PropLibraryPanel.java                                    ← [v3] new
   devTest/
     UniversalTestScreen.java         ← [v2] replaces GltfMapTestScene
     FlyModeController.java           ← [v2] new
@@ -2593,7 +3179,16 @@ Build in strict dependency order.
 | 20 | **DoorController** (full physics drag model) | All door subsystems | 🟡 Early |
 | 21 | **Raycast Interaction System** (+ knob collider registry) | Bullet, InteractableRegistry | 🟡 Early |
 | 22 | **Map Editor (Swing)** | MapDocument | 🟡 Early |
-| 23 | **Map Document Loader** | AudioSystem, TriggerEvaluator | 🟡 Early |
+| 22a | **PropCategory + PropBehavior enums** | Nothing | 🟡 Early |
+| 22b | **PropAnchor + PropSoundSlot + PropPhysicsHints** | Nothing | 🟡 Early |
+| 22c | **PropDefinition + PropDefSerializer** | LibGDX Json | 🟡 Early |
+| 22d | **PropDefinitionLoader + PropDefinitionRegistry** | PropDefSerializer, Gdx.files | 🟡 Early |
+| 22e | **MeshRaycaster** | LibGDX ModelInstance | 🟡 Early |
+| 22f | **AnchorGizmo** | LibGDX ShapeRenderer | 🟡 Early |
+| 22g | **PropDefEditorScreen + PropDefEditorState** | All 22a–22f | 🟡 Dev tool |
+| 22h | **PropLibraryPanel (Swing)** | PropDefinitionRegistry, MapEditorPanel | 🟡 Dev tool |
+| 22i | **PropInstanceSpawner + PropInstance** | PropDefinitionRegistry, DoorController, LightManager, InteractableRegistry | 🟢 Mid |
+| 23 | **Map Document Loader** | AudioSystem, TriggerEvaluator, PropInstanceSpawner | 🟡 Early |
 | 24 | **Debug Console** (+ fly + hallucinate commands) | EventBus, StorySystem stub | 🟡 Dev tool |
 | 25 | **Dialogue + Subtitle System** | GameAudioSystem | 🟢 Mid |
 | 26 | **Save / Checkpoint System** | EventState, DialogueSystem | 🟢 Mid |
@@ -2639,6 +3234,18 @@ Build in strict dependency order.
 | **Single map** | Load `resonance-map.gltf` | All rooms present in one mesh |
 | **Room boundary** | Walk through `ROOM_BOUNDARY` trigger | Fade-to-black, fade-in, room subtitle |
 | **Map Editor** | Add DOOR, set position, save | `resonance-map.json` contains the door |
+| **Prop Editor — load** | Open PropDefEditorScreen, load `door-office.gltf` | Model renders; viewport functional |
+| **Prop Editor — anchor** | Right-click mesh surface | Anchor sphere placed at hit point |
+| **Prop Editor — name** | Name anchor "hinge" | Anchor appears in list with correct coords |
+| **Prop Editor — save** | Save prop | `props/door-office.prop.json` written with correct JSON |
+| **Prop Library tab** | Open Map Editor (F12) | Prop Library tab lists saved prop cards |
+| **Prop placement** | Drag prop card to viewport / click Place | `GLTF_PROP` entry created in `resonance-map.json` |
+| **Instance overrides** | Set `rotationY: 90`, `lockState: LOCKED` | `resonance-map.json` contains those fields |
+| **Prop spawn — door** | Launch game | Door renders at correct position/rotation; DoorController wired |
+| **Prop spawn — light** | Place light prop, launch | `GameLight` registered at `light_emit` anchor; scene illuminated |
+| **Prop spawn — vent** | Place vent prop, launch, press F | Vent opens; `onTraverseEvent` fires |
+| **Prop spawn — drawer** | Place drawer prop, launch, press F | Drawer slides out; sound plays |
+| **Prop tag passthrough** | Add `"ventCrawlWidth": "0.6"` tag in editor | Tag present in JSON; no crash at runtime |
 
 ## Core Gameplay — Door (Physics Drag) [v2]
 

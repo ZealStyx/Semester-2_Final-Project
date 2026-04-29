@@ -16,6 +16,7 @@ public final class DoorController implements Interactable {
     private static final float MIN_OPEN_ANGLE = 0f;
     private static final float KNOB_OFFSET_X = 0.85f;
     private static final float KNOB_HEIGHT = 1.0f;
+    private static final float BASE_GRAB_ANGLE_DEGREES_PER_SECOND = 120f;
 
     private static final float OPEN_ANGLE_DEGREES = 90f;
     private static final float MOVE_INTERPOLATION = 5f;
@@ -31,6 +32,9 @@ public final class DoorController implements Interactable {
     private float targetAngle;
     private float creakCooldownSeconds;
     private float pendingNoiseIntensity;
+    private float dragResponseMultiplier = 1f;
+    private float slamNoiseMultiplier = 1f;
+    private float interactNoiseMultiplier = 1f;
 
     public DoorController(String id, Vector3 hingePosition, float interactionRadius) {
         this.id = id == null ? "door" : id;
@@ -55,6 +59,18 @@ public final class DoorController implements Interactable {
 
     public void setLockState(DoorLockState lockState) {
         this.lockState = lockState == null ? DoorLockState.UNLOCKED : lockState;
+    }
+
+    public void setDragResponseMultiplier(float multiplier) {
+        dragResponseMultiplier = Math.max(0.2f, multiplier);
+    }
+
+    public void setSlamNoiseMultiplier(float multiplier) {
+        slamNoiseMultiplier = Math.max(0.2f, multiplier);
+    }
+
+    public void setInteractNoiseMultiplier(float multiplier) {
+        interactNoiseMultiplier = Math.max(0.2f, multiplier);
     }
 
     public DoorLockState lockState() {
@@ -96,9 +112,9 @@ public final class DoorController implements Interactable {
         }
         currentAngle = MAX_OPEN_ANGLE;
         targetAngle = MAX_OPEN_ANGLE;
-        pendingNoiseIntensity = Math.max(pendingNoiseIntensity, 1.0f);
+        pendingNoiseIntensity = Math.max(pendingNoiseIntensity, slamNoiseMultiplier);
         if (ctx != null && ctx.audioSystem() != null) {
-            ctx.audioSystem().playSfx("audio/sfx/door/slam_impact.wav", hingePosition, ctx.playerPosition(), 1.0f);
+            ctx.audioSystem().playSfx("audio/sfx/door/slam_impact.wav", hingePosition, ctx.playerPosition(), slamNoiseMultiplier);
         }
     }
 
@@ -162,9 +178,15 @@ public final class DoorController implements Interactable {
         }
     }
 
-    public void updateDrag(float deltaSeconds, float normSpeed, EventContext ctx) {
-        float angleDelta = (MathUtils.clamp(normSpeed, 0f, 1f) * 120f) * Math.max(0f, deltaSeconds);
+    public void dragStep(float deltaSeconds, float normSpeed, EventContext ctx) {
+        float effectiveSpeed = MathUtils.clamp(normSpeed * dragResponseMultiplier, 0f, 1f);
+        float angleDelta = effectiveSpeed * BASE_GRAB_ANGLE_DEGREES_PER_SECOND * Math.max(0f, deltaSeconds);
         applyAngleDelta(angleDelta);
-        creakSystem.updateDrag(id, normSpeed, hingePosition, ctx == null ? null : ctx.playerPosition(), deltaSeconds, ctx);
+        creakSystem.updateDrag(id, effectiveSpeed, hingePosition, ctx == null ? null : ctx.playerPosition(), deltaSeconds, ctx);
+        pendingNoiseIntensity = Math.max(pendingNoiseIntensity, effectiveSpeed * interactNoiseMultiplier);
+    }
+
+    public void updateDrag(float deltaSeconds, float normSpeed, EventContext ctx) {
+        dragStep(deltaSeconds, normSpeed, ctx);
     }
 }

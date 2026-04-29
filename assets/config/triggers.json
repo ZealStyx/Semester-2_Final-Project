@@ -13,6 +13,48 @@
         "maxY": 4.0,
         "maxZ": 20.0
       }
+    },
+    {
+      "id": "room-boundary-open-hall",
+      "type": "ZONE",
+      "targetEvent": "room-boundary-open-hall",
+      "cooldownSeconds": 0.0,
+      "volume": {
+        "minX": 43.0,
+        "minY": -2.0,
+        "minZ": 36.0,
+        "maxX": 57.0,
+        "maxY": 4.0,
+        "maxZ": 44.0
+      }
+    },
+    {
+      "id": "room-boundary-crossroads",
+      "type": "ZONE",
+      "targetEvent": "room-boundary-crossroads",
+      "cooldownSeconds": 0.0,
+      "volume": {
+        "minX": 36.0,
+        "minY": -2.0,
+        "minZ": 6.0,
+        "maxX": 44.0,
+        "maxY": 4.0,
+        "maxZ": 14.0
+      }
+    },
+    {
+      "id": "room-boundary-transition-strip",
+      "type": "ZONE",
+      "targetEvent": "room-boundary-transition-strip",
+      "cooldownSeconds": 0.0,
+      "volume": {
+        "minX": 43.0,
+        "minY": -2.0,
+        "minZ": 49.0,
+        "maxX": 57.0,
+        "maxY": 4.0,
+        "maxZ": 51.0
+      }
     }
   ]
 }

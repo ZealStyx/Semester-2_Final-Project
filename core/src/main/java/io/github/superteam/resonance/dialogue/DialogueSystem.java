@@ -25,7 +25,12 @@ public final class DialogueSystem {
 
     public void render(SpriteBatch batch) {
         DialogueLine current = queue.peek();
-        if (current != null) renderer.render(batch, current.text);
+        if (current == null) return;
+
+        boolean wasDrawing = batch.isDrawing();
+        if (!wasDrawing) batch.begin();
+        renderer.render(batch, current.text);
+        if (!wasDrawing) batch.end();
     }
 
     public void clear() { queue.clear(); }

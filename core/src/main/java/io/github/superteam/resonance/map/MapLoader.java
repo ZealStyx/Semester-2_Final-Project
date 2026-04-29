@@ -2,6 +2,12 @@ package io.github.superteam.resonance.map;
 
 import io.github.superteam.resonance.model.ModelAssetManager;
 import io.github.superteam.resonance.model.ModelData;
+import io.github.superteam.resonance.prop.PropDefinitionLoader;
+import io.github.superteam.resonance.prop.PropDefinitionRegistry;
+import io.github.superteam.resonance.prop.PropInstanceSpawner;
+import io.github.superteam.resonance.prop.PropDefinition;
+import io.github.superteam.resonance.map.MapObject;
+import io.github.superteam.resonance.map.MapObjectType;
 
 /**
  * Loads the canonical map model and derives collision data.
@@ -36,7 +42,41 @@ public final class MapLoader {
             DEFAULT_MAP_Y_OFFSET
         );
         MapDocument resolvedDoc = mapDocument == null ? MapDocument.defaults() : mapDocument;
-        return new LoadedMap(modelData, resolvedDoc, collisionData, bvhCollisionData);
+
+        // Load prop definitions from the props directory and spawn instances found in the map document.
+        PropDefinitionLoader propLoader = new PropDefinitionLoader();
+        PropDefinitionRegistry registry = propLoader.loadDirectory("props");
+        PropInstanceSpawner spawner = new PropInstanceSpawner(registry);
+
+        if (resolvedDoc.objects != null) {
+            for (MapObject obj : resolvedDoc.objects) {
+                if (obj == null || obj.type == null) {
+                    continue;
+                }
+                switch (obj.type) {
+                    case GLTF_PROP, BOX_PROP, CYLINDER_PROP, FURNITURE, DOOR -> {
+                        String defId = obj.property("propDef", null);
+                        if (defId == null || defId.isBlank()) {
+                            defId = obj.property("propId", null);
+                        }
+                        if (defId == null || defId.isBlank()) {
+                            continue;
+                        }
+                        float rotY = 0f;
+                        try {
+                            rotY = Float.parseFloat(obj.property("rotationY", "0"));
+                        } catch (NumberFormatException ignore) {
+                        }
+                        spawner.spawn(defId, obj.position == null ? new com.badlogic.gdx.math.Vector3() : obj.position, rotY);
+                    }
+                    default -> {
+                        // other object types ignored by prop spawner
+                    }
+                }
+            }
+        }
+
+        return new LoadedMap(modelData, resolvedDoc, collisionData, bvhCollisionData, spawner);
     }
 
     public static boolean isMapFile(String path) {

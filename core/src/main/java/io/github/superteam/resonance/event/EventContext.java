@@ -29,6 +29,7 @@ public final class EventContext {
     private final InventorySystem inventorySystem;
     private final io.github.superteam.resonance.lighting.FlashlightController flashlightController;
     private final io.github.superteam.resonance.behavior.BehaviorSystem behaviorSystem;
+    private final io.github.superteam.resonance.transition.RoomTransitionSystem roomTransitionSystem;
 
     public EventContext(
         Vector3 triggerPosition,
@@ -41,7 +42,7 @@ public final class EventContext {
         BiConsumer<String, Float> subtitleSink
     ) {
         this(triggerPosition, playerPosition, elapsedSeconds, propagationOrchestrator, audioSystem, eventBus, eventState, subtitleSink,
-            null, null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null, null);
     }
 
     public EventContext(
@@ -60,7 +61,8 @@ public final class EventContext {
         io.github.superteam.resonance.story.StorySystem storySystem,
         InventorySystem inventorySystem,
         io.github.superteam.resonance.lighting.FlashlightController flashlightController,
-        io.github.superteam.resonance.behavior.BehaviorSystem behaviorSystem
+        io.github.superteam.resonance.behavior.BehaviorSystem behaviorSystem,
+        io.github.superteam.resonance.transition.RoomTransitionSystem roomTransitionSystem
     ) {
         this.triggerPosition = triggerPosition == null ? new Vector3() : new Vector3(triggerPosition);
         this.playerPosition = playerPosition == null ? new Vector3() : new Vector3(playerPosition);
@@ -78,6 +80,7 @@ public final class EventContext {
         this.inventorySystem = inventorySystem;
         this.flashlightController = flashlightController;
         this.behaviorSystem = behaviorSystem;
+        this.roomTransitionSystem = roomTransitionSystem;
     }
 
     public Vector3 triggerPosition() {
@@ -159,7 +162,8 @@ public final class EventContext {
             storySystem,
             inventorySystem,
             flashlightController,
-            behaviorSystem
+            behaviorSystem,
+            roomTransitionSystem
         );
     }
 
@@ -172,4 +176,5 @@ public final class EventContext {
     public InventorySystem inventorySystem() { return inventorySystem; }
     public io.github.superteam.resonance.lighting.FlashlightController flashlightController() { return flashlightController; }
     public io.github.superteam.resonance.behavior.BehaviorSystem behaviorSystem() { return behaviorSystem; }
+    public io.github.superteam.resonance.transition.RoomTransitionSystem roomTransitionSystem() { return roomTransitionSystem; }
 }

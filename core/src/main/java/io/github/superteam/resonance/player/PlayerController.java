@@ -36,7 +36,7 @@ public class PlayerController {
     private static final float CEILING_CHECK_MARGIN = 0.05f;
 
     // Collision capsule dimensions
-    private static final float CAPSULE_RADIUS = 0.3f;
+    public static final float CAPSULE_RADIUS = 0.3f;
 
     // Ceiling detection parameters
     private static final float JUMP_COOLDOWN_SECONDS = 0.26f;
