@@ -8,8 +8,9 @@ import java.util.Objects;
  * Bounded LRU cache for dual-band propagation results.
  */
 public final class PropagationCache {
-    private static final int DEFAULT_MAX_CACHE_SIZE = 32;
-    private static final float DEFAULT_CACHE_TTL_SECONDS = 0.8f;
+    private static final int DEFAULT_MAX_CACHE_SIZE = 128;
+    private static final float DEFAULT_CACHE_TTL_SECONDS = 2.5f;
+    private static final float INTENSITY_ROUNDING_PRECISION = 0.05f;
 
     private final int maxCacheSize;
     private final float cacheTimeToLiveSeconds;
@@ -87,6 +88,17 @@ public final class PropagationCache {
             if (revealThreshold < 0f) {
                 throw new IllegalArgumentException("Reveal threshold must be non-negative.");
             }
+        }
+
+        public static CacheKey withRoundedIntensity(
+            String sourceNodeId,
+            float baseIntensity,
+            float lowBandAttenuationAlpha,
+            float highBandAttenuationAlpha,
+            float revealThreshold
+        ) {
+            float roundedIntensity = Math.round(baseIntensity / INTENSITY_ROUNDING_PRECISION) * INTENSITY_ROUNDING_PRECISION;
+            return new CacheKey(sourceNodeId, roundedIntensity, lowBandAttenuationAlpha, highBandAttenuationAlpha, revealThreshold);
         }
     }
 

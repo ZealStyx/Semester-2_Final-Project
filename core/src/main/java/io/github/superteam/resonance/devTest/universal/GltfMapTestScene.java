@@ -2820,6 +2820,9 @@ public final class GltfMapTestScene extends ScreenAdapter {
         if (spatialCueController != null) {
             spatialCueController.dispose();
         }
+        if (soundPropagationOrchestrator != null) {
+            soundPropagationOrchestrator.dispose();
+        }
         if (eventTriggerRuntime != null) {
             eventTriggerRuntime.dispose();
             eventTriggerRuntime = null;

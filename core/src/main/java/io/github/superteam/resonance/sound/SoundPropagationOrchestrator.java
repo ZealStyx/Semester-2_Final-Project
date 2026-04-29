@@ -24,6 +24,7 @@ public final class SoundPropagationOrchestrator {
     private final ReflectionEngine reflectionEngine;
     private final AmbientSoundScheduler ambientSoundScheduler;
     private final SoundSourceRegistry soundSourceRegistry;
+    private final AsyncPropagationComputer asyncComputer;
 
     private final List<EnemyHearingTarget> enemyHearingTargets = new ArrayList<>();
     private final List<EchoDirectorListener> echoDirectorListeners = new ArrayList<>();
@@ -70,7 +71,8 @@ public final class SoundPropagationOrchestrator {
             soundBalancingConfig,
             propagationCache,
             reflectionEngine,
-            new AmbientSoundScheduler()
+            new AmbientSoundScheduler(),
+            new AsyncPropagationComputer(dijkstraPathfinder, propagationCache)
         );
     }
 
@@ -82,7 +84,8 @@ public final class SoundPropagationOrchestrator {
         SoundBalancingConfig soundBalancingConfig,
         PropagationCache propagationCache,
         ReflectionEngine reflectionEngine,
-        AmbientSoundScheduler ambientSoundScheduler
+        AmbientSoundScheduler ambientSoundScheduler,
+        AsyncPropagationComputer asyncComputer
     ) {
         this.acousticGraphEngine = Objects.requireNonNull(acousticGraphEngine, "Acoustic graph engine must not be null.");
         this.dijkstraPathfinder = Objects.requireNonNull(dijkstraPathfinder, "Dijkstra pathfinder must not be null.");
@@ -93,6 +96,7 @@ public final class SoundPropagationOrchestrator {
         this.reflectionEngine = Objects.requireNonNull(reflectionEngine, "Reflection engine must not be null.");
         this.ambientSoundScheduler = Objects.requireNonNull(ambientSoundScheduler, "Ambient scheduler must not be null.");
         this.soundSourceRegistry = new SoundSourceRegistry();
+        this.asyncComputer = Objects.requireNonNull(asyncComputer, "Async computer must not be null.");
     }
 
     public void registerSoundSource(SoundSource soundSource) {
@@ -105,6 +109,10 @@ public final class SoundPropagationOrchestrator {
 
     public void clearSoundSources() {
         soundSourceRegistry.clear();
+    }
+
+    public void dispose() {
+        asyncComputer.shutdown();
     }
 
     public void registerEnemyListener(EnemyHearingTarget enemyHearingTarget) {
@@ -233,7 +241,24 @@ public final class SoundPropagationOrchestrator {
         float highBandAttenuationAlpha = soundBalancingConfig.attenuationAlphaForBand(FrequencyBand.HIGH);
         float revealThreshold = soundBalancingConfig.revealThreshold();
 
-        PropagationCache.CacheKey cacheKey = new PropagationCache.CacheKey(
+        // Try async computation first (returns cached if available, null if computing)
+        DualBandResult asyncResult = asyncComputer.computeOrGetCached(
+            acousticGraphEngine,
+            tunedEvent.sourceNodeId(),
+            tunedEvent.baseIntensity(),
+            lowBandAttenuationAlpha,
+            highBandAttenuationAlpha,
+            revealThreshold,
+            nowSeconds
+        );
+
+        if (asyncResult != null) {
+            return asyncResult;
+        }
+
+        // Fallback to synchronous computation if async returned null (computation in progress)
+        // This ensures we always have a result, even if slightly stale
+        PropagationCache.CacheKey cacheKey = PropagationCache.CacheKey.withRoundedIntensity(
             tunedEvent.sourceNodeId(),
             tunedEvent.baseIntensity(),
             lowBandAttenuationAlpha,
@@ -246,6 +271,7 @@ public final class SoundPropagationOrchestrator {
             return cachedDualBandResult;
         }
 
+        // Last resort: synchronous computation (should rarely happen due to cache)
         DualBandResult computedDualBandResult = dijkstraPathfinder.onSoundEventDualBand(
             acousticGraphEngine,
             tunedEvent.sourceNodeId(),

@@ -1,0 +1,11 @@
+{
+keybinds: {
+	class: java.util.LinkedHashMap
+	INTERACT: 34
+	CROUCH: 31
+	SPRINT: 59
+	FLASHLIGHT: 40
+	CONSOLE: 68
+	HOLD_BREATH: 57
+}
+}
